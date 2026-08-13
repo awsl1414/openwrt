@@ -1,0 +1,35 @@
+#!/bin/sh
+# One-shot: enable 2.4 GHz AP when an older overlay still has disabled=1.
+# Fresh images also seed this via board.d ucidef_set_wireless("2g").
+
+[ -f /etc/config/wireless ] || exit 0
+
+. /lib/functions.sh
+. /lib/functions/system.sh
+
+case "$(board_name)" in
+askey,sbe1v1k) ;;
+*) exit 0 ;;
+esac
+
+enable_2g_ap() {
+	local cfg="$1"
+	local device mode band
+
+	config_get mode "$cfg" mode
+	[ "$mode" = "ap" ] || return 0
+
+	config_get device "$cfg" device
+	[ -n "$device" ] || return 0
+
+	config_get band "$device" band
+	[ "$band" = "2g" ] || return 0
+
+	uci -q set "wireless.${cfg}.disabled=0"
+}
+
+config_load wireless
+config_foreach enable_2g_ap wifi-iface
+uci commit wireless
+
+exit 0
