@@ -38,8 +38,6 @@ ipq95xx_setup_wlan()
 	askey,sbe1v1k)
 		# Multi-path: phy may enumerate on any of the three PCIe endpoints.
 		ucidef_add_wlan "$DEV_PATH_PCIE0" "$DEV_PATH_PCIE1" "$DEV_PATH_PCIE2"
-		# US: hostapd rejects country 00 (needed for 6 GHz capability).
-		ucidef_set_country "US"
 		# Only 2.4 GHz gets an enabled default AP; 5/6 GHz stay disabled
 		# until configured (wifi-detect uses board.json ssid defaults).
 		ucidef_set_wireless "2g" "OpenWrt" "none"
