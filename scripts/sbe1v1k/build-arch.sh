@@ -352,12 +352,13 @@ ensure_theme_build_deps() {
 	grep -q '^CONFIG_PACKAGE_luci-base=y' .config || \
 		die "theme build dep missing: CONFIG_PACKAGE_luci-base=y"
 
-	# Argon: jsonfilter + wget (opkg) or wget-any (apk); leave provider to LUCI_DEPENDS.
+	# Argon: jsonfilter + a concrete wget provider (wget-ssl provides wget/@wget-any).
+	# Virtual wget-any alone is not auto-selected under CONFIG_USE_APK=y.
 	if grep -q '^CONFIG_PACKAGE_luci-theme-argon=y' .config; then
 		grep -q '^CONFIG_PACKAGE_jsonfilter=y' .config || \
 			die "theme build dep missing: CONFIG_PACKAGE_jsonfilter=y (luci-theme-argon)"
 		if ! grep -qE '^CONFIG_PACKAGE_(wget|wget-ssl|wget-any)=y' .config; then
-			die "theme build dep missing: wget/wget-ssl/wget-any (luci-theme-argon LUCI_DEPENDS)"
+			die "theme build dep missing: wget-ssl (or wget/wget-any) for luci-theme-argon"
 		fi
 	fi
 }
@@ -451,11 +452,27 @@ if ((CLEAN_BUILD)); then
 	make dirclean
 fi
 
+# Drop stale package/feeds symlinks left after upstream packages are removed
+# (e.g. routing no longer ships bmx7/olsrd → "dependency does not exist" noise).
+prune_stale_feed_symlinks() {
+	local -a stale=()
+	local link
+	[[ -d package/feeds ]] || return 0
+	while IFS= read -r -d '' link; do
+		stale+=("$link")
+	done < <(find package/feeds -xtype l -print0 2>/dev/null || true)
+	((${#stale[@]})) || return 0
+	log "Pruning ${#stale[@]} stale package/feeds symlink(s)"
+	printf '  %s\n' "${stale[@]}"
+	rm -f -- "${stale[@]}"
+}
+
 if ((FEEDS)); then
 	log "feeds update / install"
 	# feeds update hits git.openwrt.org / GitHub; use the same proxy when enabled.
 	with_proxy ./scripts/feeds update -a
 	./scripts/feeds install -a
+	prune_stale_feed_symlinks
 fi
 
 # After feeds so feeds/luci/luci.mk exists when packages are scanned/compiled.

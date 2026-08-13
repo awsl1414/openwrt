@@ -89,11 +89,14 @@ require_grep "scripts/sbe1v1k/minimal.config" \
 	'^CONFIG_PACKAGE_jsonfilter=y' \
 	"seed enables jsonfilter (argon dep)"
 require_grep "scripts/sbe1v1k/minimal.config" \
-	'wget vs wget-any' \
-	"seed documents wget via LUCI_DEPENDS (not hard-pinned)"
+	'^CONFIG_PACKAGE_wget-ssl=y' \
+	"seed enables wget-ssl (argon wget-any provider)"
 require_grep "scripts/sbe1v1k/build-arch.sh" \
 	'ensure_theme_build_deps' \
 	"build-arch checks theme build deps"
+require_grep "scripts/sbe1v1k/build-arch.sh" \
+	'prune_stale_feed_symlinks' \
+	"build-arch prunes stale feed symlinks"
 require_grep "scripts/sbe1v1k/build-arch.sh" \
 	'CONFIG_PACKAGE_luci-theme-argon=y' \
 	"build-arch gates argon wget/jsonfilter checks"
