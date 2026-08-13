@@ -70,45 +70,15 @@ require_grep "scripts/sbe1v1k/minimal.config" \
 require_grep "scripts/sbe1v1k/minimal.config" \
 	'^CONFIG_PACKAGE_luci-ssl=y' \
 	"seed enables luci-ssl"
-require_grep "scripts/sbe1v1k/minimal.config" \
-	'^CONFIG_PACKAGE_luci-theme-aurora=y' \
-	"seed enables luci-theme-aurora"
-require_grep "scripts/sbe1v1k/minimal.config" \
-	'^CONFIG_PACKAGE_luci-theme-argon=y' \
-	"seed enables luci-theme-argon"
-require_grep "scripts/sbe1v1k/minimal.config" \
-	'^CONFIG_PACKAGE_luci-theme-alpha=y' \
-	"seed enables luci-theme-alpha"
-require_grep "scripts/sbe1v1k/minimal.config" \
-	'^CONFIG_PACKAGE_luci-app-alpha-config=y' \
-	"seed enables luci-app-alpha-config"
-require_grep "scripts/sbe1v1k/minimal.config" \
-	'^CONFIG_PACKAGE_luci-base=y' \
-	"seed enables luci-base (theme dep)"
-require_grep "scripts/sbe1v1k/minimal.config" \
-	'^CONFIG_PACKAGE_jsonfilter=y' \
-	"seed enables jsonfilter (argon dep)"
-require_grep "scripts/sbe1v1k/minimal.config" \
-	'^CONFIG_PACKAGE_wget-ssl=y' \
-	"seed enables wget-ssl (argon wget-any provider)"
-require_grep "scripts/sbe1v1k/build-arch.sh" \
-	'ensure_theme_build_deps' \
-	"build-arch checks theme build deps"
 require_grep "scripts/sbe1v1k/build-arch.sh" \
 	'prune_stale_feed_symlinks' \
 	"build-arch prunes stale feed symlinks"
-require_grep "scripts/sbe1v1k/build-arch.sh" \
-	'CONFIG_PACKAGE_luci-theme-argon=y' \
-	"build-arch gates argon wget/jsonfilter checks"
 require_grep "scripts/sbe1v1k/build-arch.sh" \
 	'^USE_PROXY=0$' \
 	"build-arch proxy defaults off"
 require_grep "scripts/sbe1v1k/build-arch.sh" \
 	'PROXY_PORT="\$\{PROXY_PORT:-7897\}"' \
 	"build-arch default proxy port 7897"
-require_grep "scripts/sbe1v1k/build-arch.sh" \
-	'e10bd0969c4978ad41495f7e53ac6fd162dda113' \
-	"aurora theme commit pinned"
 require_grep "package/kernel/mac80211/Makefile" \
 	'^PKG_RELEASE:=' \
 	"mac80211 PKG_RELEASE present"

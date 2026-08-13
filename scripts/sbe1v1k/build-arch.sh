@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Build Askey SBE1V1K OpenWrt on Arch Linux (bring-up / private fork).
 #
-# Scope: device image (feeds + optional community LuCI themes + seed + make world).
-# Not a Dedrimer-style product build (no iStore/large seed); themes are bring-up extras.
+# Scope: minimal device image (feeds + seed defconfig + make world).
+# Not a Dedrimer-style product build (no iStore/Argon/large seed).
 #
 # Workflow: edit/commit on the porting machine → push → on Arch:
 #   cd openwrt && bash scripts/sbe1v1k/build-arch.sh --pull -j"$(nproc)"
@@ -10,7 +10,6 @@
 # Also:
 #   bash scripts/sbe1v1k/build-arch.sh --skip-deps --keep-config -j28
 #   bash scripts/sbe1v1k/build-arch.sh --download-only
-#   bash scripts/sbe1v1k/build-arch.sh --skip-themes
 #   bash scripts/sbe1v1k/build-arch.sh --proxy                 # 127.0.0.1:7897
 #   bash scripts/sbe1v1k/build-arch.sh --proxy-host 10.0.0.1 --proxy-port 7890
 #   bash scripts/sbe1v1k/build-arch.sh --skip-tests
@@ -35,7 +34,6 @@ CLEAN_BUILD=0
 DOWNLOAD_ONLY=0
 RETRY_SERIAL=0 # off by default: -j1 V=s retry is slow; pass --retry to enable
 FEEDS=1
-THEMES=1
 RUN_TESTS=1
 KEEP_CONFIG=0
 
@@ -45,23 +43,6 @@ PROXY_HOST="${PROXY_HOST:-127.0.0.1}"
 PROXY_PORT="${PROXY_PORT:-7897}"
 # If set (env or --proxy URL), used as-is; otherwise http://$PROXY_HOST:$PROXY_PORT.
 PROXY_URL="${PROXY_URL:-}"
-
-# Community LuCI themes (single-package repos → package/<name>, not feeds.conf).
-# Format: name|git-url|pinned-commit
-# Alpha hard-depends on luci-app-alpha-config.
-COMMUNITY_THEME_REPOS=(
-	'luci-theme-aurora|https://github.com/eamonxg/luci-theme-aurora.git|e10bd0969c4978ad41495f7e53ac6fd162dda113'
-	'luci-theme-argon|https://github.com/jerrykuku/luci-theme-argon.git|86c3156bab0ee2b8c91af68b3fa4655f2df51d09'
-	'luci-theme-alpha|https://github.com/derisamedia/luci-theme-alpha.git|16e0c038c09421236319a4cc369a1f3fc98e1ef4'
-	'luci-app-alpha-config|https://github.com/derisamedia/luci-app-alpha-config.git|83fe832a325f9d5c3b434922320e7c1d859f614b'
-)
-
-COMMUNITY_THEME_PACKAGES=(
-	luci-theme-aurora
-	luci-theme-argon
-	luci-theme-alpha
-	luci-app-alpha-config
-)
 
 log() {
 	if [[ -t 1 ]]; then
@@ -100,7 +81,6 @@ Options:
       --branch NAME  Branch for --pull (default: $BRANCH)
       --skip-deps    Skip pacman dependency install
       --skip-feeds   Skip feeds update/install
-      --skip-themes  Skip theme fetch and disable theme packages in .config
       --skip-tests   Skip post-build scripts/sbe1v1k/tests/run.sh
       --proxy [URL]  Enable proxy (default http://$PROXY_HOST:$PROXY_PORT)
       --proxy-host H Proxy host (implies --proxy; default $PROXY_HOST)
@@ -152,7 +132,6 @@ while (($#)); do
 		;;
 	--skip-deps) INSTALL_DEPS=0; shift ;;
 	--skip-feeds) FEEDS=0; shift ;;
-	--skip-themes) THEMES=0; shift ;;
 	--skip-tests) RUN_TESTS=0; shift ;;
 	--proxy)
 		USE_PROXY=1
@@ -280,89 +259,6 @@ with_proxy() {
 	return "$rc"
 }
 
-# Clone/pin single-package theme repos into package/<name> so luci.mk PKG_NAME matches.
-# Do not put these in feeds.conf.default (root Makefile would become PKG_NAME=<feed>).
-fetch_community_themes() {
-	local entry name url sha dest head
-	if ((USE_PROXY)); then
-		log "Fetching pinned community LuCI themes (proxy $(proxy_endpoint))"
-	else
-		log "Fetching pinned community LuCI themes (no proxy)"
-	fi
-	mkdir -p package
-	for entry in "${COMMUNITY_THEME_REPOS[@]}"; do
-		IFS='|' read -r name url sha <<<"$entry"
-		[[ -n "$name" && -n "$url" && -n "$sha" ]] || die "bad COMMUNITY_THEME_REPOS entry: $entry"
-		dest="package/$name"
-		if [[ -d "$dest/.git" ]]; then
-			log "Updating $name → $sha"
-			git -C "$dest" remote set-url origin "$url"
-		else
-			[[ ! -e "$dest" ]] || die "refusing to overwrite non-git path: $dest"
-			log "Cloning $name → $sha"
-			mkdir -p "$dest"
-			git -C "$dest" init
-			git -C "$dest" remote add origin "$url"
-		fi
-		with_proxy git -C "$dest" fetch --depth 1 origin "$sha" \
-			|| die "failed to fetch $name @$sha from $url"
-		git -C "$dest" checkout --detach --force FETCH_HEAD
-		git -C "$dest" clean -fdx
-		head="$(git -C "$dest" rev-parse HEAD)"
-		[[ "$head" == "$sha" ]] || die "$name commit mismatch: got $head want $sha"
-		[[ -f "$dest/Makefile" ]] || die "missing Makefile after fetch: $dest"
-	done
-}
-
-# Keep seed CONFIG_PACKAGE_* in sync with --skip-themes.
-disable_community_theme_packages() {
-	local pkg
-	[[ -f .config ]] || die "disable_community_theme_packages requires .config"
-	log "Disabling community theme packages (--skip-themes)"
-	for pkg in "${COMMUNITY_THEME_PACKAGES[@]}"; do
-		# Drop any prior =y / is not set lines for this symbol.
-		sed -i -E "/^#? ?CONFIG_PACKAGE_${pkg}([= ].*)?\$/d" .config
-		printf '# CONFIG_PACKAGE_%s is not set\n' "$pkg" >> .config
-	done
-	make olddefconfig || die "make olddefconfig failed after --skip-themes"
-	for pkg in "${COMMUNITY_THEME_PACKAGES[@]}"; do
-		if grep -q "^CONFIG_PACKAGE_${pkg}=y" .config; then
-			die "--skip-themes but CONFIG_PACKAGE_${pkg}=y still set"
-		fi
-	done
-}
-
-# Fail early if enabled theme packages are missing deps (or luci.mk absent).
-# Checks follow what is actually =y in .config (safe with --keep-config).
-ensure_theme_build_deps() {
-	local pkg any_theme=0
-	[[ -f feeds/luci/luci.mk ]] || \
-		die "feeds/luci/luci.mk missing (needed by aurora/argon/alpha-config); run feeds update/install"
-	[[ -f .config ]] || die "ensure_theme_build_deps requires .config"
-
-	for pkg in "${COMMUNITY_THEME_PACKAGES[@]}"; do
-		if grep -q "^CONFIG_PACKAGE_${pkg}=y" .config; then
-			any_theme=1
-			break
-		fi
-	done
-	((any_theme)) || return 0
-
-	# Aurora / Alpha / alpha-config / Argon all need luci-base (via luci.mk or luci-ssl).
-	grep -q '^CONFIG_PACKAGE_luci-base=y' .config || \
-		die "theme build dep missing: CONFIG_PACKAGE_luci-base=y"
-
-	# Argon: jsonfilter + a concrete wget provider (wget-ssl provides wget/@wget-any).
-	# Virtual wget-any alone is not auto-selected under CONFIG_USE_APK=y.
-	if grep -q '^CONFIG_PACKAGE_luci-theme-argon=y' .config; then
-		grep -q '^CONFIG_PACKAGE_jsonfilter=y' .config || \
-			die "theme build dep missing: CONFIG_PACKAGE_jsonfilter=y (luci-theme-argon)"
-		if ! grep -qE '^CONFIG_PACKAGE_(wget|wget-ssl|wget-any)=y' .config; then
-			die "theme build dep missing: wget-ssl (or wget/wget-any) for luci-theme-argon"
-		fi
-	fi
-}
-
 apply_seed_config() {
 	if ((KEEP_CONFIG)); then
 		# Iterative builds: keep menuconfig tweaks; only refresh defaults.
@@ -383,24 +279,6 @@ apply_seed_config() {
 	# defconfig must leave the SBE profile selected or images will be wrong/missing.
 	grep -q '^CONFIG_TARGET_qualcommbe_ipq95xx_DEVICE_askey_sbe1v1k=y' .config || \
 		die "DEVICE askey_sbe1v1k not enabled in .config; check seed / --keep-config"
-
-	if ((!THEMES)); then
-		disable_community_theme_packages
-	else
-		# Themes were fetched into package/; seed expects them when applying seed.
-		local pkg
-		for pkg in "${COMMUNITY_THEME_PACKAGES[@]}"; do
-			[[ -f "package/$pkg/Makefile" ]] || \
-				die "missing package/$pkg (fetch themes or pass --skip-themes)"
-		done
-		if ((!KEEP_CONFIG)); then
-			for pkg in "${COMMUNITY_THEME_PACKAGES[@]}"; do
-				grep -q "^CONFIG_PACKAGE_${pkg}=y" .config || \
-					die "seed/defconfig did not enable CONFIG_PACKAGE_${pkg}=y"
-			done
-		fi
-		ensure_theme_build_deps
-	fi
 }
 
 git_pull_ff() {
@@ -429,7 +307,6 @@ if ((USE_PROXY)); then
 else
 	printf 'Proxy: disabled (use --proxy / --proxy-host / --proxy-port)\n'
 fi
-if ((THEMES)); then printf 'Themes: enabled\n'; else printf 'Themes: skipped\n'; fi
 if ((RUN_TESTS)); then printf 'Tests: enabled\n'; else printf 'Tests: skipped\n'; fi
 printf 'Git: '; git rev-parse --short HEAD 2>/dev/null || true
 printf 'Disk: '; df -h . | awk 'NR==2 {print $4 " free on " $6}'
@@ -474,9 +351,6 @@ if ((FEEDS)); then
 	./scripts/feeds install -a
 	prune_stale_feed_symlinks
 fi
-
-# After feeds so feeds/luci/luci.mk exists when packages are scanned/compiled.
-((THEMES)) && fetch_community_themes
 
 apply_seed_config
 
