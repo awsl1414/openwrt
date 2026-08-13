@@ -18,6 +18,11 @@
 /overlay
 /package/feeds
 /package/openwrt-packages
+# Community LuCI themes cloned by scripts/sbe1v1k/build-arch.sh (not vendored in git)
+/package/luci-theme-aurora
+/package/luci-theme-argon
+/package/luci-theme-alpha
+/package/luci-app-alpha-config
 /*.patch
 /llvm-bpf*
 key-build*

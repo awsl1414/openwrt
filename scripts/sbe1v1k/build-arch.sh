@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Build Askey SBE1V1K OpenWrt on Arch Linux (bring-up / private fork).
 #
-# Scope: minimal device image (feeds + seed defconfig + make world).
-# Not a Dedrimer-style product build (no iStore/Argon/large seed).
+# Scope: device image (feeds + optional community LuCI themes + seed + make world).
+# Not a Dedrimer-style product build (no iStore/large seed); themes are bring-up extras.
 #
 # Workflow: edit/commit on the porting machine → push → on Arch:
 #   cd openwrt && bash scripts/sbe1v1k/build-arch.sh --pull -j"$(nproc)"
@@ -10,6 +10,14 @@
 # Also:
 #   bash scripts/sbe1v1k/build-arch.sh --skip-deps --keep-config -j28
 #   bash scripts/sbe1v1k/build-arch.sh --download-only
+#   bash scripts/sbe1v1k/build-arch.sh --skip-themes
+#   bash scripts/sbe1v1k/build-arch.sh --proxy                 # 127.0.0.1:7897
+#   bash scripts/sbe1v1k/build-arch.sh --proxy-host 10.0.0.1 --proxy-port 7890
+#   bash scripts/sbe1v1k/build-arch.sh --skip-tests
+#
+# Host tests (no full build):
+#   bash scripts/sbe1v1k/tests/run.sh
+#   SBE_HOST=192.168.1.1 bash scripts/sbe1v1k/tests/run.sh --device
 #
 # Do not run as root (OpenWrt refuses root builds). Use sudo only for pacman.
 
@@ -27,7 +35,33 @@ CLEAN_BUILD=0
 DOWNLOAD_ONLY=0
 RETRY_SERIAL=0 # off by default: -j1 V=s retry is slow; pass --retry to enable
 FEEDS=1
+THEMES=1
+RUN_TESTS=1
 KEEP_CONFIG=0
+
+# Proxy off by default. Enable with --proxy / --proxy-host / --proxy-port / --proxy=URL.
+USE_PROXY=0
+PROXY_HOST="${PROXY_HOST:-127.0.0.1}"
+PROXY_PORT="${PROXY_PORT:-7897}"
+# If set (env or --proxy URL), used as-is; otherwise http://$PROXY_HOST:$PROXY_PORT.
+PROXY_URL="${PROXY_URL:-}"
+
+# Community LuCI themes (single-package repos → package/<name>, not feeds.conf).
+# Format: name|git-url|pinned-commit
+# Alpha hard-depends on luci-app-alpha-config.
+COMMUNITY_THEME_REPOS=(
+	'luci-theme-aurora|https://github.com/eamonxg/luci-theme-aurora.git|e10bd0969c4978ad41495f7e53ac6fd162dda113'
+	'luci-theme-argon|https://github.com/jerrykuku/luci-theme-argon.git|86c3156bab0ee2b8c91af68b3fa4655f2df51d09'
+	'luci-theme-alpha|https://github.com/derisamedia/luci-theme-alpha.git|16e0c038c09421236319a4cc369a1f3fc98e1ef4'
+	'luci-app-alpha-config|https://github.com/derisamedia/luci-app-alpha-config.git|83fe832a325f9d5c3b434922320e7c1d859f614b'
+)
+
+COMMUNITY_THEME_PACKAGES=(
+	luci-theme-aurora
+	luci-theme-argon
+	luci-theme-alpha
+	luci-app-alpha-config
+)
 
 log() {
 	if [[ -t 1 ]]; then
@@ -46,6 +80,14 @@ die() {
 	exit 1
 }
 
+proxy_endpoint() {
+	if [[ -n "$PROXY_URL" ]]; then
+		printf '%s' "$PROXY_URL"
+	else
+		printf 'http://%s:%s' "$PROXY_HOST" "$PROXY_PORT"
+	fi
+}
+
 usage() {
 	cat <<EOF
 Usage: bash $0 [options]
@@ -58,6 +100,12 @@ Options:
       --branch NAME  Branch for --pull (default: $BRANCH)
       --skip-deps    Skip pacman dependency install
       --skip-feeds   Skip feeds update/install
+      --skip-themes  Skip theme fetch and disable theme packages in .config
+      --skip-tests   Skip post-build scripts/sbe1v1k/tests/run.sh
+      --proxy [URL]  Enable proxy (default http://$PROXY_HOST:$PROXY_PORT)
+      --proxy-host H Proxy host (implies --proxy; default $PROXY_HOST)
+      --proxy-port N Proxy port (implies --proxy; default $PROXY_PORT)
+      --no-proxy     Disable proxy (default)
       --keep-config  Reuse existing .config (do not apply seed)
       --clean        make dirclean before configure
       --download-only
@@ -70,6 +118,9 @@ Environment:
   SEED_CONFIG=PATH   Config seed (default: scripts/sbe1v1k/minimal.config)
   JOBS=N             Same as --jobs
   BRANCH=NAME        Same as --branch
+  PROXY_HOST=ADDR    Default proxy host (default: 127.0.0.1)
+  PROXY_PORT=N       Default proxy port (default: 7897)
+  PROXY_URL=URL      Full proxy URL (overrides host/port when set)
 EOF
 }
 
@@ -101,6 +152,50 @@ while (($#)); do
 		;;
 	--skip-deps) INSTALL_DEPS=0; shift ;;
 	--skip-feeds) FEEDS=0; shift ;;
+	--skip-themes) THEMES=0; shift ;;
+	--skip-tests) RUN_TESTS=0; shift ;;
+	--proxy)
+		USE_PROXY=1
+		# Optional URL argument: --proxy http://host:port
+		if (($# >= 2)) && [[ "$2" != -* ]]; then
+			PROXY_URL="$2"
+			shift 2
+		else
+			shift
+		fi
+		;;
+	--proxy=*)
+		USE_PROXY=1
+		PROXY_URL="${1#--proxy=}"
+		shift
+		;;
+	--proxy-host)
+		(($# >= 2)) || die "$1 needs a value"
+		PROXY_HOST="$2"
+		PROXY_URL="" # host/port take precedence over a stale URL
+		USE_PROXY=1
+		shift 2
+		;;
+	--proxy-host=*)
+		PROXY_HOST="${1#--proxy-host=}"
+		PROXY_URL=""
+		USE_PROXY=1
+		shift
+		;;
+	--proxy-port)
+		(($# >= 2)) || die "$1 needs a value"
+		PROXY_PORT="$2"
+		PROXY_URL=""
+		USE_PROXY=1
+		shift 2
+		;;
+	--proxy-port=*)
+		PROXY_PORT="${1#--proxy-port=}"
+		PROXY_URL=""
+		USE_PROXY=1
+		shift
+		;;
+	--no-proxy) USE_PROXY=0; shift ;;
 	--keep-config) KEEP_CONFIG=1; shift ;;
 	--clean) CLEAN_BUILD=1; shift ;;
 	--download-only) DOWNLOAD_ONLY=1; shift ;;
@@ -111,6 +206,7 @@ while (($#)); do
 done
 
 [[ "$JOBS" =~ ^[1-9][0-9]*$ ]] || die "JOBS must be a positive integer"
+[[ "$PROXY_PORT" =~ ^[1-9][0-9]*$ ]] || die "PROXY_PORT must be a positive integer"
 [[ "$(uname -s)" == Linux ]] || die "run on Linux (Arch build host)"
 ((EUID != 0)) || die "do not run as root; use a normal user with sudo for deps"
 command -v pacman >/dev/null || die "pacman required (Arch Linux)"
@@ -146,6 +242,96 @@ install_deps() {
 		|| die "pacman dependency install failed"
 }
 
+# Run a command with HTTP(S) proxy env for GitHub / slow mirrors.
+# Restores prior proxy-related env afterward so pacman/make stay unaffected.
+with_proxy() {
+	if ((!USE_PROXY)); then
+		"$@"
+		return
+	fi
+	local endpoint
+	endpoint="$(proxy_endpoint)"
+	local -a saved_vars=(http_proxy https_proxy HTTP_PROXY HTTPS_PROXY ALL_PROXY all_proxy)
+	local -A saved=()
+	local v rc
+	for v in "${saved_vars[@]}"; do
+		if [[ -n "${!v+x}" ]]; then
+			saved["$v"]="${!v}"
+		fi
+	done
+	export http_proxy="$endpoint" https_proxy="$endpoint"
+	export HTTP_PROXY="$endpoint" HTTPS_PROXY="$endpoint"
+	export ALL_PROXY="$endpoint" all_proxy="$endpoint"
+	# Keep set +e so we can restore env even when the command fails.
+	set +e
+	GIT_CONFIG_COUNT=1 \
+		GIT_CONFIG_KEY_0=http.proxy \
+		GIT_CONFIG_VALUE_0="$endpoint" \
+		"$@"
+	rc=$?
+	set -e
+	for v in "${saved_vars[@]}"; do
+		if [[ -n "${saved[$v]+x}" ]]; then
+			export "$v=${saved[$v]}"
+		else
+			unset -v "$v" || true
+		fi
+	done
+	return "$rc"
+}
+
+# Clone/pin single-package theme repos into package/<name> so luci.mk PKG_NAME matches.
+# Do not put these in feeds.conf.default (root Makefile would become PKG_NAME=<feed>).
+fetch_community_themes() {
+	local entry name url sha dest head
+	if ((USE_PROXY)); then
+		log "Fetching pinned community LuCI themes (proxy $(proxy_endpoint))"
+	else
+		log "Fetching pinned community LuCI themes (no proxy)"
+	fi
+	mkdir -p package
+	for entry in "${COMMUNITY_THEME_REPOS[@]}"; do
+		IFS='|' read -r name url sha <<<"$entry"
+		[[ -n "$name" && -n "$url" && -n "$sha" ]] || die "bad COMMUNITY_THEME_REPOS entry: $entry"
+		dest="package/$name"
+		if [[ -d "$dest/.git" ]]; then
+			log "Updating $name → $sha"
+			git -C "$dest" remote set-url origin "$url"
+		else
+			[[ ! -e "$dest" ]] || die "refusing to overwrite non-git path: $dest"
+			log "Cloning $name → $sha"
+			mkdir -p "$dest"
+			git -C "$dest" init
+			git -C "$dest" remote add origin "$url"
+		fi
+		with_proxy git -C "$dest" fetch --depth 1 origin "$sha" \
+			|| die "failed to fetch $name @$sha from $url"
+		git -C "$dest" checkout --detach --force FETCH_HEAD
+		git -C "$dest" clean -fdx
+		head="$(git -C "$dest" rev-parse HEAD)"
+		[[ "$head" == "$sha" ]] || die "$name commit mismatch: got $head want $sha"
+		[[ -f "$dest/Makefile" ]] || die "missing Makefile after fetch: $dest"
+	done
+}
+
+# Keep seed CONFIG_PACKAGE_* in sync with --skip-themes (problem 2).
+disable_community_theme_packages() {
+	local pkg
+	[[ -f .config ]] || die "disable_community_theme_packages requires .config"
+	log "Disabling community theme packages (--skip-themes)"
+	for pkg in "${COMMUNITY_THEME_PACKAGES[@]}"; do
+		# Drop any prior =y / is not set lines for this symbol.
+		sed -i -E "/^#? ?CONFIG_PACKAGE_${pkg}([= ].*)?\$/d" .config
+		printf '# CONFIG_PACKAGE_%s is not set\n' "$pkg" >> .config
+	done
+	make olddefconfig || die "make olddefconfig failed after --skip-themes"
+	for pkg in "${COMMUNITY_THEME_PACKAGES[@]}"; do
+		if grep -q "^CONFIG_PACKAGE_${pkg}=y" .config; then
+			die "--skip-themes but CONFIG_PACKAGE_${pkg}=y still set"
+		fi
+	done
+}
+
 apply_seed_config() {
 	if ((KEEP_CONFIG)); then
 		# Iterative builds: keep menuconfig tweaks; only refresh defaults.
@@ -166,6 +352,23 @@ apply_seed_config() {
 	# defconfig must leave the SBE profile selected or images will be wrong/missing.
 	grep -q '^CONFIG_TARGET_qualcommbe_ipq95xx_DEVICE_askey_sbe1v1k=y' .config || \
 		die "DEVICE askey_sbe1v1k not enabled in .config; check seed / --keep-config"
+
+	if ((!THEMES)); then
+		disable_community_theme_packages
+	else
+		# Themes were fetched into package/; seed expects them when applying seed.
+		local pkg
+		for pkg in "${COMMUNITY_THEME_PACKAGES[@]}"; do
+			[[ -f "package/$pkg/Makefile" ]] || \
+				die "missing package/$pkg (fetch themes or pass --skip-themes)"
+		done
+		if ((!KEEP_CONFIG)); then
+			for pkg in "${COMMUNITY_THEME_PACKAGES[@]}"; do
+				grep -q "^CONFIG_PACKAGE_${pkg}=y" .config || \
+					die "seed/defconfig did not enable CONFIG_PACKAGE_${pkg}=y"
+			done
+		fi
+	fi
 }
 
 git_pull_ff() {
@@ -189,11 +392,18 @@ cd "$OPENWRT_DIR"
 
 log "OpenWrt: $OPENWRT_DIR"
 printf 'Jobs: %s\nBranch: %s\nSeed: %s\n' "$JOBS" "$BRANCH" "$SEED_CONFIG"
+if ((USE_PROXY)); then
+	printf 'Proxy: %s\n' "$(proxy_endpoint)"
+else
+	printf 'Proxy: disabled (use --proxy / --proxy-host / --proxy-port)\n'
+fi
+if ((THEMES)); then printf 'Themes: enabled\n'; else printf 'Themes: skipped\n'; fi
+if ((RUN_TESTS)); then printf 'Tests: enabled\n'; else printf 'Tests: skipped\n'; fi
 printf 'Git: '; git rev-parse --short HEAD 2>/dev/null || true
 printf 'Disk: '; df -h . | awk 'NR==2 {print $4 " free on " $6}'
 
 ((INSTALL_DEPS)) && install_deps
-((DO_PULL)) && git_pull_ff
+((DO_PULL)) && with_proxy git_pull_ff
 
 # Cold toolchain + kernel builds need tens of GiB; fail early if the disk is tight.
 available_kib="$(df -Pk . | awk 'NR==2 {print $4}')"
@@ -212,9 +422,13 @@ fi
 
 if ((FEEDS)); then
 	log "feeds update / install"
-	./scripts/feeds update -a
+	# feeds update hits git.openwrt.org / GitHub; use the same proxy when enabled.
+	with_proxy ./scripts/feeds update -a
 	./scripts/feeds install -a
 fi
+
+# After feeds so feeds/luci/luci.mk exists when packages are scanned/compiled.
+((THEMES)) && fetch_community_themes
 
 apply_seed_config
 
@@ -246,9 +460,22 @@ log "Build OK. Artifacts under: $OPENWRT_DIR/$OUT"
 # make world can succeed while the wrong profile was built; require SBE images.
 shopt -s nullglob
 arts=("$OUT"/*askey_sbe1v1k*)
+initramfs=("$OUT"/*askey_sbe1v1k*initramfs*)
+sysupgrade=("$OUT"/*askey_sbe1v1k*sysupgrade*)
 shopt -u nullglob
 ((${#arts[@]} > 0)) || die "build finished but no *askey_sbe1v1k* artifacts in $OUT"
+((${#initramfs[@]} > 0)) || die "missing initramfs image (*askey_sbe1v1k*initramfs*) in $OUT"
+((${#sysupgrade[@]} > 0)) || die "missing sysupgrade image (*askey_sbe1v1k*sysupgrade*) in $OUT"
 ls -lh "${arts[@]}"
+
+# Host-side regression checks (upgrade tar preflight + tree invariants).
+if ((RUN_TESTS)) && [[ -f "$SCRIPT_DIR/tests/run.sh" ]]; then
+	log "Running scripts/sbe1v1k/tests/run.sh"
+	bash "$SCRIPT_DIR/tests/run.sh" "${sysupgrade[0]}" \
+		|| die "SBE1V1K host tests failed"
+elif ((!RUN_TESTS)); then
+	log "Skipping host tests (--skip-tests)"
+fi
 
 # Typical names for TFTP / sysupgrade:
 #   *-askey_sbe1v1k-initramfs-uImage.itb
