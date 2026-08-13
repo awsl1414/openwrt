@@ -82,6 +82,21 @@ require_grep "scripts/sbe1v1k/minimal.config" \
 require_grep "scripts/sbe1v1k/minimal.config" \
 	'^CONFIG_PACKAGE_luci-app-alpha-config=y' \
 	"seed enables luci-app-alpha-config"
+require_grep "scripts/sbe1v1k/minimal.config" \
+	'^CONFIG_PACKAGE_luci-base=y' \
+	"seed enables luci-base (theme dep)"
+require_grep "scripts/sbe1v1k/minimal.config" \
+	'^CONFIG_PACKAGE_jsonfilter=y' \
+	"seed enables jsonfilter (argon dep)"
+require_grep "scripts/sbe1v1k/minimal.config" \
+	'wget vs wget-any' \
+	"seed documents wget via LUCI_DEPENDS (not hard-pinned)"
+require_grep "scripts/sbe1v1k/build-arch.sh" \
+	'ensure_theme_build_deps' \
+	"build-arch checks theme build deps"
+require_grep "scripts/sbe1v1k/build-arch.sh" \
+	'CONFIG_PACKAGE_luci-theme-argon=y' \
+	"build-arch gates argon wget/jsonfilter checks"
 require_grep "scripts/sbe1v1k/build-arch.sh" \
 	'^USE_PROXY=0$' \
 	"build-arch proxy defaults off"

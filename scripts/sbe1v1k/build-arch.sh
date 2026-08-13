@@ -314,7 +314,7 @@ fetch_community_themes() {
 	done
 }
 
-# Keep seed CONFIG_PACKAGE_* in sync with --skip-themes (problem 2).
+# Keep seed CONFIG_PACKAGE_* in sync with --skip-themes.
 disable_community_theme_packages() {
 	local pkg
 	[[ -f .config ]] || die "disable_community_theme_packages requires .config"
@@ -330,6 +330,36 @@ disable_community_theme_packages() {
 			die "--skip-themes but CONFIG_PACKAGE_${pkg}=y still set"
 		fi
 	done
+}
+
+# Fail early if enabled theme packages are missing deps (or luci.mk absent).
+# Checks follow what is actually =y in .config (safe with --keep-config).
+ensure_theme_build_deps() {
+	local pkg any_theme=0
+	[[ -f feeds/luci/luci.mk ]] || \
+		die "feeds/luci/luci.mk missing (needed by aurora/argon/alpha-config); run feeds update/install"
+	[[ -f .config ]] || die "ensure_theme_build_deps requires .config"
+
+	for pkg in "${COMMUNITY_THEME_PACKAGES[@]}"; do
+		if grep -q "^CONFIG_PACKAGE_${pkg}=y" .config; then
+			any_theme=1
+			break
+		fi
+	done
+	((any_theme)) || return 0
+
+	# Aurora / Alpha / alpha-config / Argon all need luci-base (via luci.mk or luci-ssl).
+	grep -q '^CONFIG_PACKAGE_luci-base=y' .config || \
+		die "theme build dep missing: CONFIG_PACKAGE_luci-base=y"
+
+	# Argon: jsonfilter + wget (opkg) or wget-any (apk); leave provider to LUCI_DEPENDS.
+	if grep -q '^CONFIG_PACKAGE_luci-theme-argon=y' .config; then
+		grep -q '^CONFIG_PACKAGE_jsonfilter=y' .config || \
+			die "theme build dep missing: CONFIG_PACKAGE_jsonfilter=y (luci-theme-argon)"
+		if ! grep -qE '^CONFIG_PACKAGE_(wget|wget-ssl|wget-any)=y' .config; then
+			die "theme build dep missing: wget/wget-ssl/wget-any (luci-theme-argon LUCI_DEPENDS)"
+		fi
+	fi
 }
 
 apply_seed_config() {
@@ -368,6 +398,7 @@ apply_seed_config() {
 					die "seed/defconfig did not enable CONFIG_PACKAGE_${pkg}=y"
 			done
 		fi
+		ensure_theme_build_deps
 	fi
 }
 
