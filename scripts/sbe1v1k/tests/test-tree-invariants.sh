@@ -189,14 +189,29 @@ require_grep "package/kernel/mac80211/Makefile" \
 	'^PKG_RELEASE:=' \
 	"mac80211 PKG_RELEASE present"
 require_grep "package/network/config/wifi-scripts/Makefile" \
-	'^PKG_RELEASE:=4$' \
-	"wifi-scripts PKG_RELEASE bumped for band repair"
+	'^PKG_RELEASE:=5$' \
+	"wifi-scripts PKG_RELEASE bumped for setup-time band repair"
 require_grep "package/network/config/wifi-scripts/files/lib/wifi/mac80211.uc" \
 	'Incomplete sections \(missing band\)' \
 	"mac80211.uc repairs missing wifi-device.band"
 require_grep "package/network/config/wifi-scripts/files/lib/wifi/mac80211.uc" \
 	'create_name_order = \[ "2G", "5G", "6G" \]' \
 	"mac80211.uc creates radio0=2g radio1=5g radio2=6g"
+require_grep "package/network/config/wifi-scripts/files/usr/share/hostap/radio-mac.uc" \
+	'fill_missing_band_from_board' \
+	"radio-mac.uc fills missing band at setup"
+require_grep "package/network/config/wifi-scripts/files/usr/share/hostap/radio-mac.uc" \
+	'export function radio_htmode' \
+	"radio-mac.uc exports shared radio_htmode"
+require_grep "package/network/config/wifi-scripts/files/lib/wifi/mac80211.uc" \
+	'import { normalize_mac, radio_htmode }' \
+	"mac80211.uc reuses radio_htmode from radio-mac"
+require_grep "package/network/config/wifi-scripts/files-ucode/lib/netifd/wireless/mac80211.sh" \
+	'fill_missing_band_from_board' \
+	"ucode setup repairs missing band before hwmode fallback"
+require_grep "package/network/config/wifi-scripts/files-ucode/lib/netifd/wireless/mac80211.sh" \
+	'persist_repaired_band' \
+	"ucode setup defers UCI persist of repaired band"
 require_grep "package/network/config/wifi-scripts/files/usr/share/hostap/wifi-detect.uc" \
 	'entry\.hwmac' \
 	"wifi-detect records per-radio hwmac"
