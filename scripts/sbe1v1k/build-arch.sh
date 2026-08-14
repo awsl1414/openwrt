@@ -21,7 +21,7 @@
 #
 # Host tests (no full build):
 #   bash scripts/sbe1v1k/tests/run.sh
-#   SBE_HOST=192.168.1.1 bash scripts/sbe1v1k/tests/run.sh --device
+#   SBE_HOST=192.168.255.1 bash scripts/sbe1v1k/tests/run.sh --device
 #
 # Do not run as root (OpenWrt refuses root builds). Use sudo only for pacman.
 

@@ -3,7 +3,7 @@
 #
 #   bash scripts/sbe1v1k/tests/run.sh
 #   bash scripts/sbe1v1k/tests/run.sh /path/to/*-sysupgrade.bin
-#   SBE_HOST=192.168.1.1 bash scripts/sbe1v1k/tests/run.sh --device
+#   SBE_HOST=192.168.255.1 bash scripts/sbe1v1k/tests/run.sh --device
 #
 set -Eeuo pipefail
 
@@ -16,7 +16,7 @@ usage() {
 Usage: bash $0 [--device] [sysupgrade.bin]
 
   (default)   tree invariants + radio-mac + phy-setup-lock + upgrade-validation
-  --device    also run on-device smoke (SBE_HOST / root@192.168.1.1)
+  --device    also run on-device smoke (SBE_HOST / root@192.168.255.1)
   IMAGE       optional real sysupgrade.bin passed to upgrade-validation
 EOF
 }

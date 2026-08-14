@@ -66,6 +66,27 @@ require_grep "target/linux/qualcommbe/ipq95xx/base-files/etc/board.d/02_network"
 require_grep "target/linux/qualcommbe/ipq95xx/base-files/etc/board.d/02_network" \
 	'ucidef_add_wlan' \
 	"board.d registers multi-path wlan"
+require_grep "target/linux/qualcommbe/ipq95xx/base-files/etc/board.d/02_network" \
+	'ucidef_set_country \"US\"' \
+	"board.d defaults country US"
+require_grep "package/base-files/files/bin/config_generate" \
+	'lan\) ipad=\$\{ipaddr:-\"192\.168\.255\.1\"\}' \
+	"default LAN IP is 192.168.255.1"
+require_grep "package/base-files/image-config.in" \
+	'default \"192\.168\.255\.1\"' \
+	"preinit Kconfig default IP is 192.168.255.1"
+require_file "README.zh-CN.md"
+require_file "README.en.md"
+require_file "README-OpenWrt.md"
+require_grep "README.md" \
+	'192\.168\.255\.1' \
+	"top README documents 192.168.255.1"
+require_grep "README.zh-CN.md" \
+	'192\.168\.255\.1' \
+	"zh-CN README documents 192.168.255.1"
+require_grep "README.en.md" \
+	'192\.168\.255\.1' \
+	"en README documents 192.168.255.1"
 require_grep "target/linux/qualcommbe/ipq95xx/base-files/lib/upgrade/platform.sh" \
 	'askey,sbe1v1k' \
 	"platform.sh handles askey,sbe1v1k"

@@ -1,108 +1,74 @@
-![OpenWrt logo](include/logo.png)
+# Askey / Spectrum SBE1V1K OpenWrt
 
-OpenWrt Project is a Linux operating system targeting embedded devices. Instead
-of trying to create a single, static firmware, OpenWrt provides a fully
-writable filesystem with package management. This frees you from the
-application selection and configuration provided by the vendor and allows you
-to customize the device through the use of packages to suit any application.
-For developers, OpenWrt is the framework to build an application without having
-to build a complete firmware around it; for users this means the ability for
-full customization, to use the device in ways never envisioned.
+[简体中文](README.zh-CN.md) | [English](README.en.md)
 
-Sunshine!
+Experimental OpenWrt tree for the Spectrum/Askey **SBE1V1K** (also known as
+**RTQ7300T**), based on `qualcommbe/ipq95xx`. Branch: **`dev-sbe1v1k`**.
 
-## Download
+面向 Spectrum/Askey **SBE1V1K**（别名 **RTQ7300T**）的实验性 OpenWrt 源码树
+（`qualcommbe/ipq95xx`）。当前分支：**`dev-sbe1v1k`**。
 
-Built firmware images are available for many architectures and come with a
-package selection to be used as WiFi home router. To quickly find a factory
-image usable to migrate from a vendor stock firmware to OpenWrt, try the
-*Firmware Selector*.
+## Highlights / 主要特性
 
-* [OpenWrt Firmware Selector](https://firmware-selector.openwrt.org/)
+- Device support: DTS, BDF, eMMC images, LAN/WAN, ath12k caldata, sysupgrade
+- Tri-band Wi‑Fi: radio identity via `hwmac`, hostapd per-PHY serialize
+- Late ath12k phy: hotplug brings Wi‑Fi up after PCI enumeration
+- Default LAN: **`192.168.255.1/24`** (fork-wide `base-files` default; matches HTTP chainloader)
+- Default regulatory domain: `US` (change if you are not in the US)
+- Daily seed: LuCI HTTPS + Simplified Chinese + diagnostics (`sbe1v1k-diag`)
+- 设备支持：DTS、BDF、eMMC 镜像、LAN/WAN、ath12k caldata、sysupgrade
+- 三频：`hwmac` 识别 radio；同 phy 上 hostapd 串行启动
+- ath12k phy 晚到时由 hotplug 拉起无线
+- 默认 LAN：**`192.168.255.1/24`**（本 fork `base-files` 全局默认；与 HTTP chainloader 一致）
+- 默认监管域：`US`（非美国部署请改为当地合法国家码）
+- 日用配置：LuCI HTTPS、简体中文、`sbe1v1k-diag` 等
 
-If your device is supported, please follow the **Info** link to see install
-instructions or consult the support resources listed below.
+## Quick start / 快速开始
 
-##
-
-An advanced user may require additional or specific package. (Toolchain, SDK, ...) For everything else than simple firmware download, try the wiki download page:
-
-* [OpenWrt Wiki Download](https://openwrt.org/downloads)
-
-## Development
-
-To build your own firmware you need a GNU/Linux, BSD or macOS system (case
-sensitive filesystem required). Cygwin is unsupported because of the lack of a
-case sensitive file system.
-
-### Requirements
-
-You need the following tools to compile OpenWrt, the package names vary between
-distributions. A complete list with distribution specific packages is found in
-the [Build System Setup](https://openwrt.org/docs/guide-developer/build-system/install-buildsystem)
-documentation.
-
-```
-binutils bzip2 diff find flex gawk gcc-6+ getopt grep install libc-dev libz-dev
-make4.1+ perl python3.8+ rsync subversion unzip which
+```bash
+git clone -b dev-sbe1v1k https://github.com/awsl1414/openwrt.git
+cd openwrt
+./scripts/feeds update -a
+./scripts/feeds install -a
+cp scripts/sbe1v1k/daily.config .config   # or minimal.config
+make defconfig
+make -j"$(nproc)" world
 ```
 
-### Quickstart
+Images: `bin/targets/qualcommbe/ipq95xx/*askey_sbe1v1k*`
 
-1. Run `./scripts/feeds update -a` to obtain all the latest package definitions
-   defined in feeds.conf / feeds.conf.default
+After first boot / factory reset: LuCI / SSH at **`http://192.168.255.1`**.  
+首次启动或恢复出厂后：访问 **`http://192.168.255.1`**。
 
-2. Run `./scripts/feeds install -a` to install symlinks for all obtained
-   packages into package/feeds/
+## Documentation / 文档
 
-3. Run `make menuconfig` to select your preferred configuration for the
-   toolchain, target system & firmware packages.
+| Doc | Description |
+|---|---|
+| [README.zh-CN.md](README.zh-CN.md) | 中文项目说明（推荐） |
+| [README.en.md](README.en.md) | English project guide |
+| [README-OpenWrt.md](README-OpenWrt.md) | Upstream OpenWrt README |
+| [scripts/sbe1v1k/](scripts/sbe1v1k/) | Build seeds, Arch helper, smoke tests |
 
-4. Run `make` to build your firmware. This will download all sources, build the
-   cross-compile toolchain and then cross-compile the GNU/Linux kernel & all chosen
-   applications for your target system.
+Workspace-level porting notes (outside this git tree when cloning only `openwrt`):
+see the parent `docs/` directory if you use the full local workspace.
 
-### Related Repositories
+## Status / 状态
 
-The main repository uses multiple sub-repositories to manage packages of
-different categories. All packages are installed via the OpenWrt package
-manager called `opkg`. If you're looking to develop the web interface or port
-packages to OpenWrt, please find the fitting repository below.
+Not official OpenWrt stable support. Keep a serial console and a verified
+recovery path (initramfs / HTTP chainloader). No QSDK ECM/NSS fast path in the
+default image; forwarding uses the mainline PPE Ethernet path.
 
-* [LuCI Web Interface](https://github.com/openwrt/luci): Modern and modular
-  interface to control the device via a web browser.
+**非** OpenWrt 官方稳定支持。务必保留串口与已验证恢复手段。默认镜像不含
+实验性 QSDK ECM/NSS；转发走上游 PPE。
 
-* [OpenWrt Packages](https://github.com/openwrt/packages): Community repository
-  of ported packages.
+## Credits / 致谢
 
-* [OpenWrt Routing](https://github.com/openwrt/routing): Packages specifically
-  focused on (mesh) routing.
+OpenWrt; Andrew LaMarche ([PR #21586](https://github.com/openwrt/openwrt/pull/21586));
+[luckkyboy/SBE1V1K](https://github.com/luckkyboy/SBE1V1K);
+[yintaomu/SBE1V1K-OpenWrt](https://github.com/yintaomu/SBE1V1K-OpenWrt);
+optional HTTP chainloader: [YYH2913/http-uboot](https://github.com/YYH2913/http-uboot).
 
-* [OpenWrt Video](https://github.com/openwrt/video): Packages specifically
-  focused on display servers and clients (Xorg and Wayland).
+## License / 许可证
 
-## Support Information
-
-For a list of supported devices see the [OpenWrt Hardware Database](https://openwrt.org/supported_devices)
-
-### Documentation
-
-* [Quick Start Guide](https://openwrt.org/docs/guide-quick-start/start)
-* [User Guide](https://openwrt.org/docs/guide-user/start)
-* [Developer Documentation](https://openwrt.org/docs/guide-developer/start)
-* [Technical Reference](https://openwrt.org/docs/techref/start)
-
-### Support Community
-
-* [Forum](https://forum.openwrt.org): For usage, projects, discussions and hardware advise.
-* [Support Chat](https://webchat.oftc.net/#openwrt): Channel `#openwrt` on **oftc.net**.
-
-### Developer Community
-
-* [Bug Reports](https://bugs.openwrt.org): Report bugs in OpenWrt
-* [Dev Mailing List](https://lists.openwrt.org/mailman/listinfo/openwrt-devel): Send patches
-* [Dev Chat](https://webchat.oftc.net/#openwrt-devel): Channel `#openwrt-devel` on **oftc.net**.
-
-## License
-
-OpenWrt is licensed under GPL-2.0
+OpenWrt is GPL-2.0. Individual files retain their upstream licenses. /
+OpenWrt 为 GPL-2.0；各文件保留原有许可证与版权声明。

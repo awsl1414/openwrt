@@ -1,13 +1,13 @@
 #!/bin/sh
 # Optional on-device smoke checks for a flashed SBE1V1K bring-up image.
 #
-#   SBE_HOST=192.168.1.1 bash scripts/sbe1v1k/tests/test-device-smoke.sh
-#   bash scripts/sbe1v1k/tests/test-device-smoke.sh root@192.168.1.1
+#   SBE_HOST=192.168.255.1 bash scripts/sbe1v1k/tests/test-device-smoke.sh
+#   bash scripts/sbe1v1k/tests/test-device-smoke.sh root@192.168.255.1
 #
 # Skips (exit 0) when the host is unreachable so CI/host runs stay green.
 set -eu
 
-target=${1:-${SBE_HOST:-root@192.168.1.1}}
+target=${1:-${SBE_HOST:-root@192.168.255.1}}
 case "$target" in
 *@*) ;;
 *) target="root@$target" ;;
