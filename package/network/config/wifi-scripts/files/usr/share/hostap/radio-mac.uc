@@ -2,6 +2,12 @@
 /**
  * Multi-radio wiphy: permanent MAC ↔ current radio index.
  *
+ * Boundary (this module does NOT):
+ *   - pick hardware radio via wifi-device frequency class (Preview 2 /
+ *     upstream draft).  Frequency class is capability + hostapd input,
+ *     not identity.
+ *   - serialize hostapd (see phy-setup-lock.uc)
+ *
  * Kernel `/sys/class/ieee80211/<phy>/addresses` lists one permanent MAC per
  * radio, in the same order as `wiphy_radio` indices (ath12k publishes DT
  * per-radio MACs into addresses[i] for radio index i).  That ordering is

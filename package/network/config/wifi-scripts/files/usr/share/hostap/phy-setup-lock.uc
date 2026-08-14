@@ -2,6 +2,11 @@
 /**
  * Serialize hostapd setup across radios that share one wiphy.
  *
+ * Boundary (this module does NOT):
+ *   - pick hardware radio via wifi-device frequency class (Preview 2 /
+ *     upstream draft); this fork uses radio-mac.uc + wifi-device.hwmac
+ *   - reorder or rename wifi-device sections
+ *
  * netifd starts each wifi-device in parallel.  On ath12k WSI (one phy, several
  * hardware radios) concurrent hostapd config_set races firmware vdev start —
  * often as 6 GHz "failed to start vdev".  Hold a per-phy lock around
@@ -16,12 +21,11 @@
  *   else → addresses[] has >1 MAC, or nl80211 radios[] length > 1
  *
  * Seams: WIFI_PHY_SETUP_LOCK_DIR, WIFI_PHY_SETUP_SETTLE (default 4),
- * WIFI_PHY_SETUP_LOCK_WAIT (default 30), IEEE80211_SYSFS.
+ * WIFI_PHY_SETUP_LOCK_WAIT (default 30), IEEE80211_SYSFS (via radio-mac.uc).
  */
-import { readfile } from "fs";
+import { read_phy_addresses } from "/usr/share/hostap/radio-mac.uc";
 import * as nl80211 from "nl80211";
 
-const ieee80211_root = getenv("IEEE80211_SYSFS") || "/sys/class/ieee80211";
 const lock_root = getenv("WIFI_PHY_SETUP_LOCK_DIR") || "/var/run";
 
 export function valid_phy_name(phy) {
@@ -49,26 +53,11 @@ export function phy_setup_lock_path(phy) {
 	return `${lock_root}/wifi-${phy}.setup-lock`;
 }
 
-function phy_address_radio_count(phy) {
-	if (!valid_phy_name(phy))
-		return 0;
-
-	let raw = trim(readfile(`${ieee80211_root}/${phy}/addresses`) ?? "");
-	if (!raw)
-		return 0;
-
-	let n = 0;
-	for (let line in split(raw, "\n")) {
-		line = trim(line);
-		if (line != "")
-			n++;
-	}
-	return n;
-}
-
-/** addresses[] has more than one permanent MAC. */
+/** addresses[] has more than one permanent MAC (same filter as radio-mac.uc). */
 export function phy_is_multi_radio(phy) {
-	return phy_address_radio_count(phy) > 1;
+	if (!valid_phy_name(phy))
+		return false;
+	return length(read_phy_addresses(phy)) > 1;
 }
 
 function phy_nl_multi_radio(phy_name) {

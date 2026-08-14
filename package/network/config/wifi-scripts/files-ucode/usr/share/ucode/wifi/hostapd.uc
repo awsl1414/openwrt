@@ -613,8 +613,11 @@ export function setup(data) {
 		system('ubus wait_for hostapd');
 	let ret = global.ubus.call('hostapd', 'config_set', msg);
 
-	if (ret)
+	if (ret) {
 		netifd.add_process('/usr/sbin/hostapd', ret.pid, true, true);
-	else
-		netifd.setup_failed('HOSTAPD_START_FAILED');
+		return true;
+	}
+
+	netifd.setup_failed('HOSTAPD_START_FAILED');
+	return false;
 };
