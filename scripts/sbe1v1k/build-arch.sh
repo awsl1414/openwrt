@@ -1,13 +1,18 @@
 #!/usr/bin/env bash
-# Build Askey SBE1V1K OpenWrt on Arch Linux (bring-up / private fork).
+# Build Askey SBE1V1K OpenWrt on Arch Linux (private fork).
 #
-# Scope: minimal device image (feeds + seed defconfig + make world).
-# Not a Dedrimer-style product build (no iStore/Argon/large seed).
+# Default seed: scripts/sbe1v1k/daily.config (LuCI SSL + zh-cn + daily tools).
+# Slim bring-up: --minimal → scripts/sbe1v1k/minimal.config.
+# Community themes (aurora/argon/alpha): OFF by default; pass --themes to fetch+enable.
+# Not a Dedrimer-style product build (no iStore/Docker seed).
 #
 # Workflow: edit/commit on the porting machine → push → on Arch:
 #   cd openwrt && bash scripts/sbe1v1k/build-arch.sh --pull -j"$(nproc)"
 #
 # Also:
+#   bash scripts/sbe1v1k/build-arch.sh --themes --pull -j"$(nproc)"
+#   bash scripts/sbe1v1k/build-arch.sh --minimal -j"$(nproc)"
+#   bash scripts/sbe1v1k/build-arch.sh --seed /path/to.config …
 #   bash scripts/sbe1v1k/build-arch.sh --skip-deps --keep-config -j28
 #   bash scripts/sbe1v1k/build-arch.sh --download-only
 #   bash scripts/sbe1v1k/build-arch.sh --proxy                 # 127.0.0.1:7897
@@ -25,7 +30,7 @@ set -Eeuo pipefail
 SCRIPT_DIR="$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")"
 # This file lives at scripts/sbe1v1k/; repo root is two levels up.
 OPENWRT_DIR="${OPENWRT_DIR:-$(cd "$SCRIPT_DIR/../.." && pwd)}"
-SEED_CONFIG="${SEED_CONFIG:-$SCRIPT_DIR/minimal.config}"
+SEED_CONFIG="${SEED_CONFIG:-$SCRIPT_DIR/daily.config}"
 BRANCH="${BRANCH:-dev-sbe1v1k}"
 JOBS="${JOBS:-$(nproc 2>/dev/null || echo 4)}"
 INSTALL_DEPS=1
@@ -34,6 +39,7 @@ CLEAN_BUILD=0
 DOWNLOAD_ONLY=0
 RETRY_SERIAL=0 # off by default: -j1 V=s retry is slow; pass --retry to enable
 FEEDS=1
+THEMES=0 # opt-in: pass --themes to fetch+enable community LuCI themes
 RUN_TESTS=1
 KEEP_CONFIG=0
 
@@ -43,6 +49,40 @@ PROXY_HOST="${PROXY_HOST:-127.0.0.1}"
 PROXY_PORT="${PROXY_PORT:-7897}"
 # If set (env or --proxy URL), used as-is; otherwise http://$PROXY_HOST:$PROXY_PORT.
 PROXY_URL="${PROXY_URL:-}"
+
+# Community LuCI themes (single-package repos → package/<name>, not feeds.conf).
+# Format: name|git-url|pinned-commit
+# Enabled only with --themes (default build uses bootstrap from luci-ssl).
+# Alpha hard-depends on luci-app-alpha-config.
+COMMUNITY_THEME_REPOS=(
+	'luci-theme-aurora|https://github.com/eamonxg/luci-theme-aurora.git|e10bd0969c4978ad41495f7e53ac6fd162dda113'
+	'luci-theme-argon|https://github.com/jerrykuku/luci-theme-argon.git|86c3156bab0ee2b8c91af68b3fa4655f2df51d09'
+	'luci-theme-alpha|https://github.com/derisamedia/luci-theme-alpha.git|16e0c038c09421236319a4cc369a1f3fc98e1ef4'
+	'luci-app-alpha-config|https://github.com/derisamedia/luci-app-alpha-config.git|83fe832a325f9d5c3b434922320e7c1d859f614b'
+)
+
+COMMUNITY_THEME_PACKAGES=(
+	luci-theme-aurora
+	luci-theme-argon
+	luci-theme-alpha
+	luci-app-alpha-config
+)
+
+# Extra CONFIG_PACKAGE_* required when --themes is set (argon/apk).
+COMMUNITY_THEME_DEPS=(
+	luci-base
+	jsonfilter
+	wget-ssl
+)
+
+# Simplified Chinese i18n for community themes (LUCI_BASENAME → luci-i18n-*-zh-cn).
+# Requires CONFIG_LUCI_LANG_zh_Hans=y (daily/minimal seeds already set this).
+COMMUNITY_THEME_I18N=(
+	luci-i18n-aurora-zh-cn
+	luci-i18n-argon-zh-cn
+	luci-i18n-alpha-zh-cn
+	luci-i18n-alpha-config-zh-cn
+)
 
 log() {
 	if [[ -t 1 ]]; then
@@ -79,6 +119,9 @@ Options:
   -j, --jobs N       Parallel jobs (default: nproc); also -jN / --jobs=N
       --pull         git fetch/checkout/merge --ff-only on BRANCH before build
       --branch NAME  Branch for --pull (default: $BRANCH)
+      --seed PATH    Config seed (default: scripts/sbe1v1k/daily.config)
+      --minimal      Use scripts/sbe1v1k/minimal.config (slim bring-up)
+      --themes       Fetch+enable community themes + zh-cn i18n (off by default)
       --skip-deps    Skip pacman dependency install
       --skip-feeds   Skip feeds update/install
       --skip-tests   Skip post-build scripts/sbe1v1k/tests/run.sh
@@ -95,7 +138,7 @@ Options:
 
 Environment:
   OPENWRT_DIR=PATH   OpenWrt tree (default: repository root containing this script)
-  SEED_CONFIG=PATH   Config seed (default: scripts/sbe1v1k/minimal.config)
+  SEED_CONFIG=PATH   Config seed (default: scripts/sbe1v1k/daily.config)
   JOBS=N             Same as --jobs
   BRANCH=NAME        Same as --branch
   PROXY_HOST=ADDR    Default proxy host (default: 127.0.0.1)
@@ -130,8 +173,22 @@ while (($#)); do
 		BRANCH="${1#--branch=}"
 		shift
 		;;
+	--seed)
+		(($# >= 2)) || die "$1 needs a value"
+		SEED_CONFIG="$2"
+		shift 2
+		;;
+	--seed=*)
+		SEED_CONFIG="${1#--seed=}"
+		shift
+		;;
+	--minimal)
+		SEED_CONFIG="$SCRIPT_DIR/minimal.config"
+		shift
+		;;
 	--skip-deps) INSTALL_DEPS=0; shift ;;
 	--skip-feeds) FEEDS=0; shift ;;
+	--themes) THEMES=1; shift ;;
 	--skip-tests) RUN_TESTS=0; shift ;;
 	--proxy)
 		USE_PROXY=1
@@ -259,15 +316,97 @@ with_proxy() {
 	return "$rc"
 }
 
+# Clone/pin single-package theme repos into package/<name> so luci.mk PKG_NAME matches.
+# Do not put these in feeds.conf.default (root Makefile would become PKG_NAME=<feed>).
+fetch_community_themes() {
+	local entry name url sha dest head
+	if ((USE_PROXY)); then
+		log "Fetching pinned community LuCI themes (proxy $(proxy_endpoint))"
+	else
+		log "Fetching pinned community LuCI themes"
+	fi
+	mkdir -p package
+	for entry in "${COMMUNITY_THEME_REPOS[@]}"; do
+		IFS='|' read -r name url sha <<<"$entry"
+		[[ -n "$name" && -n "$url" && -n "$sha" ]] || die "bad COMMUNITY_THEME_REPOS entry: $entry"
+		dest="package/$name"
+		if [[ -d "$dest/.git" ]]; then
+			log "Updating $name → $sha"
+			git -C "$dest" remote set-url origin "$url"
+		else
+			[[ ! -e "$dest" ]] || die "refusing to overwrite non-git path: $dest"
+			log "Cloning $name → $sha"
+			mkdir -p "$dest"
+			git -C "$dest" init
+			git -C "$dest" remote add origin "$url"
+		fi
+		with_proxy git -C "$dest" fetch --depth 1 origin "$sha" \
+			|| die "failed to fetch $name @$sha from $url"
+		git -C "$dest" checkout --detach --force FETCH_HEAD
+		git -C "$dest" clean -fdx
+		head="$(git -C "$dest" rev-parse HEAD)"
+		[[ "$head" == "$sha" ]] || die "$name commit mismatch: got $head want $sha"
+		[[ -f "$dest/Makefile" ]] || die "missing Makefile after fetch: $dest"
+		# luci.mk language id is zh_Hans; community trees often still use po/zh-cn.
+		if [[ -d "$dest/po/zh-cn" && ! -e "$dest/po/zh_Hans" ]]; then
+			ln -s zh-cn "$dest/po/zh_Hans"
+		fi
+		[[ -d "$dest/po/zh_Hans" ]] || \
+			die "$name missing po/zh_Hans (or po/zh-cn); cannot build zh-cn i18n"
+	done
+}
+
+# Force a Kconfig symbol to =y (drop prior line first).
+config_force_y() {
+	local sym=$1
+	sed -i -E "/^#? ?${sym}([= ].*)?\$/d" .config
+	printf '%s=y\n' "$sym" >> .config
+}
+
+# Opt-in: enable themes + deps + zh-cn i18n; hard-fail if anything required is missing.
+apply_community_themes_config() {
+	local pkg
+	[[ -f .config ]] || die "apply_community_themes_config requires .config"
+	[[ -f feeds/luci/luci.mk ]] || \
+		die "feeds/luci/luci.mk missing; run feeds update/install before --themes"
+
+	for pkg in "${COMMUNITY_THEME_PACKAGES[@]}"; do
+		[[ -f "package/$pkg/Makefile" ]] || die "missing package/$pkg (fetch failed?)"
+	done
+
+	log "Enabling community themes + zh-cn i18n (--themes)"
+	config_force_y CONFIG_LUCI_LANG_zh_Hans
+	for pkg in "${COMMUNITY_THEME_PACKAGES[@]}" "${COMMUNITY_THEME_DEPS[@]}" "${COMMUNITY_THEME_I18N[@]}"; do
+		config_force_y "CONFIG_PACKAGE_${pkg}"
+	done
+	make olddefconfig || die "make olddefconfig failed after --themes"
+
+	for pkg in "${COMMUNITY_THEME_PACKAGES[@]}" "${COMMUNITY_THEME_DEPS[@]}" "${COMMUNITY_THEME_I18N[@]}"; do
+		grep -q "^CONFIG_PACKAGE_${pkg}=y" .config || \
+			die "--themes: CONFIG_PACKAGE_${pkg}=y missing after olddefconfig"
+	done
+	grep -q '^CONFIG_LUCI_LANG_zh_Hans=y' .config || \
+		die "--themes: CONFIG_LUCI_LANG_zh_Hans=y missing after olddefconfig"
+}
+
+# --keep-config without --themes must not leave community themes enabled.
+assert_no_community_themes_in_config() {
+	local pkg
+	[[ -f .config ]] || return 0
+	for pkg in "${COMMUNITY_THEME_PACKAGES[@]}"; do
+		if grep -q "^CONFIG_PACKAGE_${pkg}=y" .config; then
+			die "CONFIG_PACKAGE_${pkg}=y in .config; pass --themes or remove theme packages"
+		fi
+	done
+}
+
 apply_seed_config() {
 	if ((KEEP_CONFIG)); then
-		# Iterative builds: keep menuconfig tweaks; only refresh defaults.
 		[[ -f .config ]] || die "--keep-config requires an existing .config"
 		log "Keeping existing .config (--keep-config)"
 		make olddefconfig || die "make olddefconfig failed; fix .config or drop --keep-config"
 	else
-		# Cold / reproducible bring-up: force device profile from minimal.config.
-		log "Applying seed config → defconfig (askey_sbe1v1k)"
+		log "Applying seed → defconfig ($(basename "$SEED_CONFIG"))"
 		if [[ -f .config ]]; then
 			local bak=".config.bak.$(date +%Y%m%d-%H%M%S)"
 			cp -a .config "$bak"
@@ -276,9 +415,19 @@ apply_seed_config() {
 		cp "$SEED_CONFIG" .config
 		make defconfig
 	fi
-	# defconfig must leave the SBE profile selected or images will be wrong/missing.
 	grep -q '^CONFIG_TARGET_qualcommbe_ipq95xx_DEVICE_askey_sbe1v1k=y' .config || \
 		die "DEVICE askey_sbe1v1k not enabled in .config; check seed / --keep-config"
+	if grep -q '^CONFIG_PACKAGE_luci-ssl=y' "$SEED_CONFIG" 2>/dev/null; then
+		grep -q '^CONFIG_PACKAGE_luci-ssl=y' .config || \
+			die "luci-ssl missing after defconfig; run feeds install (drop --skip-feeds)"
+	fi
+
+	if ((THEMES)); then
+		apply_community_themes_config
+	else
+		# Cold seed has no themes; only police leftovers when reusing .config.
+		((KEEP_CONFIG)) && assert_no_community_themes_in_config
+	fi
 }
 
 git_pull_ff() {
@@ -306,6 +455,11 @@ if ((USE_PROXY)); then
 	printf 'Proxy: %s\n' "$(proxy_endpoint)"
 else
 	printf 'Proxy: disabled (use --proxy / --proxy-host / --proxy-port)\n'
+fi
+if ((THEMES)); then
+	printf 'Themes: enabled via --themes (%s)\n' "${COMMUNITY_THEME_PACKAGES[*]}"
+else
+	printf 'Themes: disabled (pass --themes for aurora/argon/alpha)\n'
 fi
 if ((RUN_TESTS)); then printf 'Tests: enabled\n'; else printf 'Tests: skipped\n'; fi
 printf 'Git: '; git rev-parse --short HEAD 2>/dev/null || true
@@ -350,6 +504,11 @@ if ((FEEDS)); then
 	with_proxy ./scripts/feeds update -a
 	./scripts/feeds install -a
 	prune_stale_feed_symlinks
+fi
+
+# After feeds so feeds/luci/luci.mk exists when packages are scanned/compiled.
+if ((THEMES)); then
+	fetch_community_themes
 fi
 
 apply_seed_config

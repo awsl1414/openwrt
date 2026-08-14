@@ -29,7 +29,7 @@ require_grep() {
 	file=$1
 	pattern=$2
 	label=$3
-	if grep -qE "$pattern" "$repo_root/$file"; then
+	if grep -qE -e "$pattern" -- "$repo_root/$file"; then
 		ok "$label"
 	else
 		bad "$label (no match in $file)"
@@ -43,8 +43,10 @@ require_file "package/firmware/ipq-wifi/src/board-askey_sbe1v1k.qcn9274"
 require_file "target/linux/qualcommbe/ipq95xx/base-files/etc/hotplug.d/firmware/11-ath12k-caldata"
 require_file "target/linux/qualcommbe/ipq95xx/base-files/lib/upgrade/platform.sh"
 require_file "target/linux/qualcommbe/ipq95xx/base-files/etc/uci-defaults/99-askey-sbe1v1k-enable-2g-wifi"
+require_file "scripts/sbe1v1k/daily.config"
 require_file "scripts/sbe1v1k/minimal.config"
 require_file "scripts/sbe1v1k/build-arch.sh"
+require_file "target/linux/qualcommbe/ipq95xx/base-files/etc/uci-defaults/zz-askey-sbe1v1k-luci-zh"
 require_file "package/kernel/mac80211/patches/ath12k/400-wifi-ath12k-set-per-radio-MAC-address-from-DT.patch"
 require_file "target/linux/qualcommbe/patches-6.18/0362-net-ethernet-qualcomm-ppe-fix-rx-dma-mapping-direction.patch"
 require_file "target/linux/qualcommbe/patches-6.18/0410-net-ethernet-qualcomm-ppe-fix-freed-skb-reuse-in-rx-reaping.patch"
@@ -64,12 +66,58 @@ require_grep "target/linux/qualcommbe/ipq95xx/base-files/etc/board.d/02_network"
 require_grep "target/linux/qualcommbe/ipq95xx/base-files/lib/upgrade/platform.sh" \
 	'askey,sbe1v1k' \
 	"platform.sh handles askey,sbe1v1k"
-require_grep "scripts/sbe1v1k/minimal.config" \
+require_grep "scripts/sbe1v1k/daily.config" \
 	'^CONFIG_TARGET_qualcommbe_ipq95xx_DEVICE_askey_sbe1v1k=y' \
-	"seed enables DEVICE askey_sbe1v1k"
-require_grep "scripts/sbe1v1k/minimal.config" \
+	"daily seed enables DEVICE askey_sbe1v1k"
+require_grep "scripts/sbe1v1k/daily.config" \
 	'^CONFIG_PACKAGE_luci-ssl=y' \
-	"seed enables luci-ssl"
+	"daily seed enables luci-ssl"
+require_grep "scripts/sbe1v1k/daily.config" \
+	'^CONFIG_LUCI_LANG_zh_Hans=y' \
+	"daily seed enables LuCI Simplified Chinese"
+require_grep "scripts/sbe1v1k/build-arch.sh" \
+	'SEED_CONFIG="\$\{SEED_CONFIG:-\$SCRIPT_DIR/daily.config\}"' \
+	"build-arch defaults to daily.config"
+require_grep "scripts/sbe1v1k/build-arch.sh" \
+	'--minimal' \
+	"build-arch supports --minimal"
+require_grep "scripts/sbe1v1k/build-arch.sh" \
+	'^THEMES=0' \
+	"build-arch themes default off"
+require_grep "scripts/sbe1v1k/build-arch.sh" \
+	'COMMUNITY_THEME_REPOS' \
+	"build-arch lists COMMUNITY_THEME_REPOS"
+require_grep "scripts/sbe1v1k/build-arch.sh" \
+	'apply_community_themes_config' \
+	"build-arch applies themes via --themes"
+require_grep "scripts/sbe1v1k/build-arch.sh" \
+	'e10bd0969c4978ad41495f7e53ac6fd162dda113' \
+	"aurora theme commit pinned"
+require_grep "scripts/sbe1v1k/build-arch.sh" \
+	'COMMUNITY_THEME_I18N' \
+	"build-arch lists theme zh-cn i18n packages"
+require_grep "scripts/sbe1v1k/build-arch.sh" \
+	'luci-i18n-argon-zh-cn' \
+	"build-arch enables luci-i18n-argon-zh-cn with --themes"
+require_grep "scripts/sbe1v1k/build-arch.sh" \
+	'po/zh_Hans' \
+	"build-arch links theme po/zh_Hans for luci.mk"
+require_grep "scripts/sbe1v1k/build-arch.sh" \
+	'assert_no_community_themes_in_config' \
+	"build-arch refuses leftover themes without --themes"
+# --skip-themes must not exist (opt-in only via --themes)
+if grep -qE -e '--skip-themes' "$repo_root/scripts/sbe1v1k/build-arch.sh"; then
+	bad "build-arch must not keep --skip-themes"
+else
+	ok "build-arch has no --skip-themes"
+fi
+# daily seed must not force community themes
+if grep -qE -e '^CONFIG_PACKAGE_luci-theme-(aurora|argon|alpha)=y' \
+	"$repo_root/scripts/sbe1v1k/daily.config"; then
+	bad "daily.config must not enable community themes (use --themes)"
+else
+	ok "daily.config has no community theme packages"
+fi
 require_grep "scripts/sbe1v1k/build-arch.sh" \
 	'prune_stale_feed_symlinks' \
 	"build-arch prunes stale feed symlinks"
