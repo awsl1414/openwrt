@@ -118,6 +118,53 @@ else
 	bad "iw phy missing"
 fi
 
+# Option B: per-radio permanent MAC identity (ath12k multi-radio / WSI)
+if remote 'test -f /usr/share/hostap/radio-mac.uc'; then
+	ok "radio-mac.uc installed"
+else
+	bad "radio-mac.uc missing on device"
+fi
+
+mac_map=$(remote '
+set -e
+# Prefer renamed board phy; fall back to phy0.
+phy=
+for c in /sys/class/ieee80211/wl0 /sys/class/ieee80211/phy0; do
+	if [ -f "$c/addresses" ]; then
+		phy=$c
+		break
+	fi
+done
+if [ -z "$phy" ]; then
+	echo "no-addresses"
+	exit 0
+fi
+naddr=$(grep -c . "$phy/addresses" || true)
+nmac=$(uci -q show wireless | grep -c "\.hwmac=" || true)
+nradio=$(uci -q show wireless | grep -c "=wifi-device" || true)
+echo "$naddr:$nmac:$nradio"
+')
+case "$mac_map" in
+no-addresses)
+	# Bring-up without ath12k addresses yet — soft skip.
+	ok "per-radio addresses not ready (skip hwmac map check)"
+	;;
+[1-9]*:[1-9]*:[1-9]*)
+	naddr=${mac_map%%:*}
+	rest=${mac_map#*:}
+	nmac=${rest%%:*}
+	nradio=${rest#*:}
+	if [ "$nmac" -ge "$naddr" ] && [ "$nradio" -ge "$naddr" ]; then
+		ok "wifi-device hwmac covers addresses ($mac_map)"
+	else
+		bad "hwmac/radio count low vs addresses ($mac_map); run: wifi config"
+	fi
+	;;
+*)
+	bad "unexpected hwmac map probe ($mac_map)"
+	;;
+esac
+
 # Firmware / cal stubs expected for ath12k
 if remote 'test -f /lib/firmware/ath12k/QCN9274/hw2.0/board-2.bin'; then
 	ok "ath12k board-2.bin present"

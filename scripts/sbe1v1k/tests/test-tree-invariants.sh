@@ -43,11 +43,13 @@ require_file "package/firmware/ipq-wifi/src/board-askey_sbe1v1k.qcn9274"
 require_file "target/linux/qualcommbe/ipq95xx/base-files/etc/hotplug.d/firmware/11-ath12k-caldata"
 require_file "target/linux/qualcommbe/ipq95xx/base-files/lib/upgrade/platform.sh"
 require_file "target/linux/qualcommbe/ipq95xx/base-files/etc/uci-defaults/99-askey-sbe1v1k-enable-2g-wifi"
+require_file "target/linux/qualcommbe/ipq95xx/base-files/usr/bin/sbe1v1k-diag"
 require_file "scripts/sbe1v1k/daily.config"
 require_file "scripts/sbe1v1k/minimal.config"
 require_file "scripts/sbe1v1k/build-arch.sh"
 require_file "target/linux/qualcommbe/ipq95xx/base-files/etc/uci-defaults/zz-askey-sbe1v1k-luci-zh"
 require_file "package/kernel/mac80211/patches/ath12k/400-wifi-ath12k-set-per-radio-MAC-address-from-DT.patch"
+require_file "package/network/config/wifi-scripts/files/usr/share/hostap/radio-mac.uc"
 require_file "target/linux/qualcommbe/patches-6.18/0362-net-ethernet-qualcomm-ppe-fix-rx-dma-mapping-direction.patch"
 require_file "target/linux/qualcommbe/patches-6.18/0410-net-ethernet-qualcomm-ppe-fix-freed-skb-reuse-in-rx-reaping.patch"
 
@@ -159,6 +161,27 @@ require_grep "scripts/sbe1v1k/build-arch.sh" \
 require_grep "package/kernel/mac80211/Makefile" \
 	'^PKG_RELEASE:=' \
 	"mac80211 PKG_RELEASE present"
+require_grep "package/network/config/wifi-scripts/Makefile" \
+	'^PKG_RELEASE:=2$' \
+	"wifi-scripts PKG_RELEASE bumped for radio-mac"
+require_grep "package/network/config/wifi-scripts/files/usr/share/hostap/wifi-detect.uc" \
+	'entry\.hwmac' \
+	"wifi-detect records per-radio hwmac"
+require_grep "package/network/config/wifi-scripts/files/lib/wifi/mac80211.uc" \
+	'find_device_by_hwmac' \
+	"mac80211.uc matches wifi-device by hwmac"
+require_grep "package/network/config/wifi-scripts/files/usr/share/hostap/radio-mac.uc" \
+	'IEEE80211_SYSFS' \
+	"radio-mac.uc test seam IEEE80211_SYSFS"
+require_grep "package/network/config/wifi-scripts/files/lib/netifd/wireless/mac80211.sh" \
+	'RADIO_MAC_SCRIPT' \
+	"shell resolve uses radio-mac.uc via RADIO_MAC_SCRIPT"
+require_grep "package/network/config/wifi-scripts/files-ucode/lib/netifd/wireless/mac80211.sh" \
+	'data\.config\.hwmac' \
+	"ucode mac80211 resolves radio from hwmac"
+require_grep "package/network/config/wifi-scripts/files-ucode/usr/share/schema/wireless.wifi-device.json" \
+	'"hwmac"' \
+	"schema documents hwmac"
 
 if command -v bash >/dev/null 2>&1; then
 	if bash -n "$repo_root/scripts/sbe1v1k/build-arch.sh"; then
