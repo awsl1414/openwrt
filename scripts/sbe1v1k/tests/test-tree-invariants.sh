@@ -94,14 +94,27 @@ require_grep "scripts/sbe1v1k/build-arch.sh" \
 	'e10bd0969c4978ad41495f7e53ac6fd162dda113' \
 	"aurora theme commit pinned"
 require_grep "scripts/sbe1v1k/build-arch.sh" \
-	'COMMUNITY_THEME_I18N' \
-	"build-arch lists theme zh-cn i18n packages"
+	'luci-app-argon-config' \
+	"build-arch includes argon-config (official zh via po/zh_Hans)"
 require_grep "scripts/sbe1v1k/build-arch.sh" \
-	'luci-i18n-argon-zh-cn' \
-	"build-arch enables luci-i18n-argon-zh-cn with --themes"
+	'3e099a37c3f71d0de677f1b6b0f4bffd57d91dac' \
+	"argon-config commit pinned"
+require_grep "scripts/sbe1v1k/build-arch.sh" \
+	'COMMUNITY_THEME_I18N' \
+	"build-arch derives zh-cn i18n only from upstream po/"
 require_grep "scripts/sbe1v1k/build-arch.sh" \
 	'po/zh_Hans' \
-	"build-arch links theme po/zh_Hans for luci.mk"
+	"build-arch detects official zh_Hans before enabling i18n"
+require_grep "scripts/sbe1v1k/build-arch.sh" \
+	'no upstream po/zh_Hans' \
+	"build-arch skips zh-cn when upstream has no po"
+# Must not hardcode theme-shell i18n (aurora/argon/alpha have no po/); argon-config is OK.
+if grep -qE 'luci-i18n-(aurora|argon|alpha)-zh-cn' \
+	"$repo_root/scripts/sbe1v1k/build-arch.sh"; then
+	bad "build-arch must not hardcode theme-shell luci-i18n-*-zh-cn"
+else
+	ok "build-arch does not hardcode theme-shell zh-cn i18n"
+fi
 require_grep "scripts/sbe1v1k/build-arch.sh" \
 	'assert_no_community_themes_in_config' \
 	"build-arch refuses leftover themes without --themes"
@@ -118,12 +131,21 @@ if grep -qE -e '--skip-themes' "$repo_root/scripts/sbe1v1k/build-arch.sh"; then
 else
 	ok "build-arch has no --skip-themes"
 fi
-# daily seed must not force community themes
-if grep -qE -e '^CONFIG_PACKAGE_luci-theme-(aurora|argon|alpha)=y' \
+# daily seed must not force community themes / theme config apps
+if grep -qE \
+	-e '^CONFIG_PACKAGE_luci-theme-(aurora|argon|alpha)=y' \
+	-e '^CONFIG_PACKAGE_luci-app-(argon|alpha)-config=y' \
 	"$repo_root/scripts/sbe1v1k/daily.config"; then
 	bad "daily.config must not enable community themes (use --themes)"
 else
 	ok "daily.config has no community theme packages"
+fi
+# Prefer if ((#I18N)); then …; fi over ((#)) && under set -e.
+if grep -nE 'COMMUNITY_THEME_I18N\[@\]\)\)\s*&&' \
+	"$repo_root/scripts/sbe1v1k/build-arch.sh" | grep -q .; then
+	bad "build-arch must not use ((#COMMUNITY_THEME_I18N)) && under set -e"
+else
+	ok "build-arch uses if for COMMUNITY_THEME_I18N under set -e"
 fi
 require_grep "scripts/sbe1v1k/build-arch.sh" \
 	'prune_stale_feed_symlinks' \

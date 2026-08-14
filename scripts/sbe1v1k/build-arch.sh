@@ -54,9 +54,12 @@ PROXY_URL="${PROXY_URL:-}"
 # Format: name|git-url|pinned-commit
 # Enabled only with --themes (default build uses bootstrap from luci-ssl).
 # Alpha hard-depends on luci-app-alpha-config.
+# Argon Chinese UI for its settings app: jerrykuku/luci-app-argon-config (has po/zh_Hans;
+# upstream v2.4.6 ships luci-i18n-argon-config-zh-cn). Theme shells themselves have no po/.
 COMMUNITY_THEME_REPOS=(
 	'luci-theme-aurora|https://github.com/eamonxg/luci-theme-aurora.git|e10bd0969c4978ad41495f7e53ac6fd162dda113'
 	'luci-theme-argon|https://github.com/jerrykuku/luci-theme-argon.git|86c3156bab0ee2b8c91af68b3fa4655f2df51d09'
+	'luci-app-argon-config|https://github.com/jerrykuku/luci-app-argon-config.git|3e099a37c3f71d0de677f1b6b0f4bffd57d91dac'
 	'luci-theme-alpha|https://github.com/derisamedia/luci-theme-alpha.git|16e0c038c09421236319a4cc369a1f3fc98e1ef4'
 	'luci-app-alpha-config|https://github.com/derisamedia/luci-app-alpha-config.git|83fe832a325f9d5c3b434922320e7c1d859f614b'
 )
@@ -64,6 +67,7 @@ COMMUNITY_THEME_REPOS=(
 COMMUNITY_THEME_PACKAGES=(
 	luci-theme-aurora
 	luci-theme-argon
+	luci-app-argon-config
 	luci-theme-alpha
 	luci-app-alpha-config
 )
@@ -75,14 +79,9 @@ COMMUNITY_THEME_DEPS=(
 	wget-ssl
 )
 
-# Simplified Chinese i18n for community themes (LUCI_BASENAME → luci-i18n-*-zh-cn).
-# Requires CONFIG_LUCI_LANG_zh_Hans=y (daily/minimal seeds already set this).
-COMMUNITY_THEME_I18N=(
-	luci-i18n-aurora-zh-cn
-	luci-i18n-argon-zh-cn
-	luci-i18n-alpha-zh-cn
-	luci-i18n-alpha-config-zh-cn
-)
+# Filled at fetch: luci-i18n-*-zh-cn only when that package tree has po/zh_Hans (official).
+# Never invent i18n for aurora/argon/alpha theme shells (no po/ in upstream pins).
+COMMUNITY_THEME_I18N=()
 
 log() {
 	if [[ -t 1 ]]; then
@@ -121,7 +120,7 @@ Options:
       --branch NAME  Branch for --pull (default: $BRANCH)
       --seed PATH    Config seed (default: scripts/sbe1v1k/daily.config)
       --minimal      Use scripts/sbe1v1k/minimal.config (slim bring-up)
-      --themes       Fetch+enable community themes + zh-cn i18n (off by default)
+      --themes       Fetch+enable community themes; zh-cn i18n only if upstream has po/
       --skip-deps    Skip pacman dependency install
       --skip-feeds   Skip feeds update/install
       --skip-tests   Skip post-build scripts/sbe1v1k/tests/run.sh
@@ -318,8 +317,18 @@ with_proxy() {
 
 # Clone/pin single-package theme repos into package/<name> so luci.mk PKG_NAME matches.
 # Do not put these in feeds.conf.default (root Makefile would become PKG_NAME=<feed>).
+# Populates COMMUNITY_THEME_I18N only when upstream ships po/zh_Hans (or po/zh-cn).
+theme_i18n_package() {
+	case "$1" in
+	luci-theme-*) printf 'luci-i18n-%s-zh-cn' "${1#luci-theme-}" ;;
+	luci-app-*) printf 'luci-i18n-%s-zh-cn' "${1#luci-app-}" ;;
+	*) die "theme_i18n_package: unsupported package name: $1" ;;
+	esac
+}
+
 fetch_community_themes() {
-	local entry name url sha dest head
+	local entry name url sha dest head i18n
+	COMMUNITY_THEME_I18N=()
 	if ((USE_PROXY)); then
 		log "Fetching pinned community LuCI themes (proxy $(proxy_endpoint))"
 	else
@@ -347,12 +356,17 @@ fetch_community_themes() {
 		head="$(git -C "$dest" rev-parse HEAD)"
 		[[ "$head" == "$sha" ]] || die "$name commit mismatch: got $head want $sha"
 		[[ -f "$dest/Makefile" ]] || die "missing Makefile after fetch: $dest"
-		# luci.mk language id is zh_Hans; community trees often still use po/zh-cn.
+		# Official Chinese only if upstream ships po/. luci.mk language id is zh_Hans.
 		if [[ -d "$dest/po/zh-cn" && ! -e "$dest/po/zh_Hans" ]]; then
 			ln -s zh-cn "$dest/po/zh_Hans"
 		fi
-		[[ -d "$dest/po/zh_Hans" ]] || \
-			die "$name missing po/zh_Hans (or po/zh-cn); cannot build zh-cn i18n"
+		if [[ -d "$dest/po/zh_Hans" ]]; then
+			i18n="$(theme_i18n_package "$name")"
+			COMMUNITY_THEME_I18N+=("$i18n")
+			log "$name: official zh_Hans → enable $i18n"
+		else
+			log "$name: no upstream po/zh_Hans; not enabling theme/app zh-cn i18n"
+		fi
 	done
 }
 
@@ -363,7 +377,7 @@ config_force_y() {
 	printf '%s=y\n' "$sym" >> .config
 }
 
-# Opt-in: enable themes + deps + zh-cn i18n; hard-fail if anything required is missing.
+# Opt-in: themes + deps + only upstream-provided zh-cn i18n; hard-fail if missing.
 apply_community_themes_config() {
 	local pkg
 	[[ -f .config ]] || die "apply_community_themes_config requires .config"
@@ -374,8 +388,13 @@ apply_community_themes_config() {
 		[[ -f "package/$pkg/Makefile" ]] || die "missing package/$pkg (fetch failed?)"
 	done
 
-	log "Enabling community themes + zh-cn i18n (--themes)"
-	config_force_y CONFIG_LUCI_LANG_zh_Hans
+	log "Enabling community themes + deps (--themes)"
+	# Use if (not ((n)) && …): false ((n)) under set -e is fragile in bash.
+	if ((${#COMMUNITY_THEME_I18N[@]})); then
+		log "Upstream zh-cn i18n: ${COMMUNITY_THEME_I18N[*]}"
+		# Needed so luci.mk emits/selects luci-i18n-*-zh-cn for packages that have po/.
+		config_force_y CONFIG_LUCI_LANG_zh_Hans
+	fi
 	for pkg in "${COMMUNITY_THEME_PACKAGES[@]}" "${COMMUNITY_THEME_DEPS[@]}" "${COMMUNITY_THEME_I18N[@]}"; do
 		config_force_y "CONFIG_PACKAGE_${pkg}"
 	done
@@ -385,8 +404,10 @@ apply_community_themes_config() {
 		grep -q "^CONFIG_PACKAGE_${pkg}=y" .config || \
 			die "--themes: CONFIG_PACKAGE_${pkg}=y missing after olddefconfig"
 	done
-	grep -q '^CONFIG_LUCI_LANG_zh_Hans=y' .config || \
-		die "--themes: CONFIG_LUCI_LANG_zh_Hans=y missing after olddefconfig"
+	if ((${#COMMUNITY_THEME_I18N[@]})); then
+		grep -q '^CONFIG_LUCI_LANG_zh_Hans=y' .config || \
+			die "--themes: CONFIG_LUCI_LANG_zh_Hans=y missing after olddefconfig (required for i18n)"
+	fi
 }
 
 # --keep-config without --themes must not leave community themes enabled.
