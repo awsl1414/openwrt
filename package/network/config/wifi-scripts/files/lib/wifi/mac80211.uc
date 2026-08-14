@@ -1,7 +1,7 @@
 #!/usr/bin/env ucode
 import { readfile } from "fs";
 import * as uci from 'uci';
-import { normalize_mac } from "/usr/share/hostap/radio-mac.uc";
+import { normalize_mac, radio_htmode } from "/usr/share/hostap/radio-mac.uc";
 
 const bands_order = [ "6G", "5G", "2G" ]; /* pick label when one radio lists several bands */
 /*
@@ -9,7 +9,6 @@ const bands_order = [ "6G", "5G", "2G" ]; /* pick label when one radio lists sev
  * Not identity — that is hwmac.  Does not affect setup radio-index resolution.
  */
 const create_name_order = [ "2G", "5G", "6G" ];
-const htmode_order = [ "EHT", "HE", "VHT", "HT" ];
 const ieee80211_root = getenv("IEEE80211_SYSFS") || "/sys/class/ieee80211";
 
 let board = json(readfile("/etc/board.json"));
@@ -91,19 +90,6 @@ function uci_set(section, option, value) {
 	print(`set wireless.${section}.${option}='${value}'\n`);
 	config[section][option] = "" + value;
 	commit = true;
-}
-
-function radio_htmode(band_name, band) {
-	let width = band.max_width;
-	if (band_name == "2G" || band_name == "2g")
-		width = 20;
-	else if (width > 80)
-		width = 80;
-
-	let htmode = filter(htmode_order, (m) => band[lc(m)])[0];
-	if (htmode)
-		return htmode + width;
-	return "NOHT";
 }
 
 function sync_radio_section(name, radio_idx, hwmac, band_name, channel, htmode) {

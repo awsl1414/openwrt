@@ -9,11 +9,12 @@ import * as hostapd from 'wifi.hostapd';
 import * as netifd from 'wifi.netifd';
 import * as iface from 'wifi.iface';
 import { find_phy } from 'wifi.utils';
-import { radio_index_by_mac } from '/usr/share/hostap/radio-mac.uc';
+import { radio_index_by_mac, fill_missing_band_from_board } from '/usr/share/hostap/radio-mac.uc';
 import {
 	needs_phy_setup_lock, acquire_hostapd_phy_lock, release_phy_setup_lock
 } from '/usr/share/hostap/phy-setup-lock.uc';
 import * as fs from 'fs';
+import * as uci from 'uci';
 
 global.radio = ARGV[2];
 
@@ -174,6 +175,26 @@ function config_add_mesh_params(config, data) {
 		config_add(config, param, data[param]);
 }
 
+/*
+ * Persist repaired band after bring-up.  uci commit does not reload wifi by
+ * itself; deferring past hostapd avoids mid-setup config churn.  Section
+ * names are restricted to UCI identifier characters.
+ */
+function persist_repaired_band(name, config) {
+	if (!name || name == "#mlo" || !match(name, /^[A-Za-z0-9_]+$/))
+		return;
+	if (!config?.band)
+		return;
+
+	let cursor = uci.cursor();
+	cursor.set("wireless", name, "band", config.band);
+	if (config.channel != null && config.channel != "")
+		cursor.set("wireless", name, "channel", "" + config.channel);
+	if (config.htmode)
+		cursor.set("wireless", name, "htmode", config.htmode);
+	cursor.commit("wireless");
+}
+
 function setup() {
 	let data = json(ARGV[3]);
 
@@ -187,6 +208,17 @@ function setup() {
 	let resolved = radio_index_by_mac(data.phy, data.config.hwmac);
 	if (resolved != null)
 		data.config.radio = resolved;
+
+	/*
+	 * LuCI CBIWifiFrequencyValue calls iwinfo freqlist with the UCI section
+	 * name (radioN).  On multi-radio phys that fails, so Enable/Save can write
+	 * empty band/channel.  Without band, the hwmode fallback below forces 2g
+	 * and hostapd dies with channel 0.  Repair from board.json before that.
+	 * UCI persist is deferred until after bring-up (see persist_repaired_band).
+	 */
+	let band_repaired = fill_missing_band_from_board(data.config);
+	if (band_repaired)
+		log(`Repaired missing band=${data.config.band} ch=${data.config.channel} from board.json`);
 
 	data.phy_suffix = phy_suffix(data.config.radio, ":");
 	data.vif_phy_suffix = phy_suffix(data.config.radio, ".");
@@ -336,6 +368,9 @@ function setup() {
 		supplicant.start(data);
 
 	netifd.set_up();
+
+	if (band_repaired)
+		persist_repaired_band(global.radio, data.config);
 
 	return 0
 }
