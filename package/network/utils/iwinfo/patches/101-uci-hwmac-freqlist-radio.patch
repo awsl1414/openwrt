@@ -1,6 +1,6 @@
 --- a/iwinfo_nl80211.c
 +++ b/iwinfo_nl80211.c
-@@ -28,6 +28,8 @@
+@@ -28,6 +28,9 @@
  #include <fnmatch.h>
  #include <stdarg.h>
  #include <stdlib.h>
