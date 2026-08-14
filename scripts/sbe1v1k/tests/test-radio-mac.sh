@@ -38,15 +38,16 @@ expect_eq() {
 grep -q 'export function radio_index_by_mac' "$radio_mac" && ok "export radio_index_by_mac" || bad "export radio_index_by_mac"
 grep -q 'export function read_phy_addresses' "$radio_mac" && ok "export read_phy_addresses" || bad "export read_phy_addresses"
 grep -q 'export function normalize_mac' "$radio_mac" && ok "export normalize_mac" || bad "export normalize_mac"
-grep -q 'export function fill_missing_band_from_board' "$radio_mac" && ok "export fill_missing_band_from_board" || bad "export fill_missing_band_from_board"
-grep -q 'export function board_band_defaults' "$radio_mac" && ok "export board_band_defaults" || bad "export board_band_defaults"
 grep -q 'export function radio_htmode' "$radio_mac" && ok "export radio_htmode" || bad "export radio_htmode"
-grep -q 'BOARD_JSON' "$radio_mac" && ok "BOARD_JSON test seam" || bad "BOARD_JSON test seam"
 grep -q 'addresses\[i\]' "$radio_mac" && ok "documents addresses[i] ↔ radio index" || bad "addresses[i] contract comment"
 grep -q 'hwmac' "$radio_mac" && ok "documents hwmac UCI field" || bad "hwmac UCI field docs"
-grep -q 'Allowed UCI repair' "$radio_mac" && ok "documents UCI band repair boundary" || bad "documents UCI band repair boundary"
+if grep -qE 'fill_missing_band_from_board|board_band_defaults|BOARD_JSON' "$radio_mac"; then
+	bad "radio-mac.uc must not keep setup band-repair helpers"
+else
+	ok "radio-mac.uc has no setup band-repair helpers"
+fi
 
-# No band→index resolution / path matching.  fill_missing_band_* is UCI repair only.
+# No band→index resolution / path matching.
 if grep -Eiq 'freq_range|path_match|phy_path|resolve_sysfs' "$radio_mac"; then
 	bad "radio-mac.uc must not grow path/freq_range fallbacks"
 elif grep -Eiq 'radio_index_by_mac.*band|resolve.*by.*band' "$radio_mac"; then
@@ -58,24 +59,17 @@ fi
 grep -q 'config_add_string hwmac' "$mac80211_sh" && ok "shell registers hwmac" || bad "shell registers hwmac"
 grep -q 'RADIO_MAC_SCRIPT' "$mac80211_sh" && ok "shell resolve uses RADIO_MAC_SCRIPT" || bad "shell RADIO_MAC_SCRIPT"
 grep -q 'radio_index_by_mac' "$mac80211_sh" && ok "shell resolve calls radio_index_by_mac" || bad "shell calls radio_index_by_mac"
-grep -q 'mac80211_persist_repaired_band' "$mac80211_sh" && ok "shell persist helper" || bad "shell persist helper"
-if grep -n 'mac80211_persist_repaired_band' -A12 "$mac80211_sh" | grep -q 'A-Za-z0-9_'; then
-	ok "shell persist validates section name"
+if grep -qE 'mac80211_persist_repaired_band|mac80211_fill_band_from_board|BAND_REPAIRED' "$mac80211_sh"; then
+	bad "shell must not keep setup band-repair helpers"
 else
-	bad "shell persist validates section name"
-fi
-if grep -n 'wireless_set_up' -A2 "$mac80211_sh" | grep -q 'mac80211_persist_repaired_band'; then
-	ok "shell persists band after wireless_set_up"
-else
-	bad "shell persists band after wireless_set_up"
+	ok "shell has no setup band-repair helpers"
 fi
 
 mac80211_ucode="$repo_root/package/network/config/wifi-scripts/files-ucode/lib/netifd/wireless/mac80211.sh"
-grep -q 'persist_repaired_band' "$mac80211_ucode" && ok "ucode persist helper" || bad "ucode persist helper"
-if grep -n 'netifd.set_up' -A3 "$mac80211_ucode" | grep -q 'persist_repaired_band'; then
-	ok "ucode persists band after set_up"
+if grep -qE 'persist_repaired_band|fill_missing_band_from_board' "$mac80211_ucode"; then
+	bad "ucode must not keep setup band-repair helpers"
 else
-	bad "ucode persists band after set_up"
+	ok "ucode has no setup band-repair helpers"
 fi
 
 # No divergent line-number grep resolve left.
@@ -200,60 +194,19 @@ if command -v ucode >/dev/null 2>&1; then
 	mac80211_resolve_radio
 	expect_eq "shell resolve after shuffle MAC01->1" "$radio" "1"
 
-	# board.json band repair (BOARD_JSON seam)
-	cat >"$work/board.json" <<'JSON'
-{
-  "wlan": {
-    "wl0": {
-      "info": {
-        "bands": {
-          "5G": { "ht": true, "he": true, "eht": true, "max_width": 160 }
-        },
-        "radios": [
-          {
-            "index": 2,
-            "hwmac": "aa:bb:cc:dd:ee:02",
-            "bands": { "5G": { "default_channel": 36 } }
-          }
-        ]
-      }
-    }
-  }
-}
-JSON
-	band_out=$(BOARD_JSON="$work/board.json" RADIO_MAC_SCRIPT="$radio_mac" ucode - <<EOF
-import { board_band_defaults, fill_missing_band_from_board, radio_htmode } from "${radio_mac}";
-let d = board_band_defaults("AA:BB:CC:DD:EE:02");
-print((d?.band ?? "null") + "\n");
-print((d?.channel ?? "null") + "\n");
-print((d?.htmode ?? "null") + "\n");
-let cfg = { hwmac: "aa:bb:cc:dd:ee:02" };
-print(fill_missing_band_from_board(cfg) ? "yes" : "no");
-print("\n");
-print(cfg.band + "," + cfg.channel + "," + cfg.htmode + "\n");
-print(fill_missing_band_from_board(cfg) ? "yes" : "no");
-print("\n");
+	ht_out=$(RADIO_MAC_SCRIPT="$radio_mac" ucode - <<EOF
+import { radio_htmode } from "${radio_mac}";
 print(radio_htmode("2G", { he: true, eht: true, max_width: 40 }) + "\n");
-print(board_band_defaults("de:ad:be:ef:00:00") == null ? "null" : "x");
-print("\n");
+print(radio_htmode("5G", { he: true, eht: true, max_width: 160 }) + "\n");
+print(radio_htmode("5G", null) + "\n");
 EOF
-) || band_out=""
-	printf '%s\n' "$band_out" | sed -n '1p' | grep -qx '5g' \
-		&& ok "ucode board_band_defaults band" || bad "ucode board_band_defaults band ($band_out)"
-	printf '%s\n' "$band_out" | sed -n '2p' | grep -qx '36' \
-		&& ok "ucode board_band_defaults channel" || bad "ucode board_band_defaults channel"
-	printf '%s\n' "$band_out" | sed -n '3p' | grep -qx 'EHT80' \
-		&& ok "ucode board_band_defaults htmode cap 80" || bad "ucode board_band_defaults htmode"
-	printf '%s\n' "$band_out" | sed -n '4p' | grep -qx 'yes' \
-		&& ok "ucode fill_missing_band applies" || bad "ucode fill_missing_band applies"
-	printf '%s\n' "$band_out" | sed -n '5p' | grep -qx '5g,36,EHT80' \
-		&& ok "ucode fill_missing_band values" || bad "ucode fill_missing_band values"
-	printf '%s\n' "$band_out" | sed -n '6p' | grep -qx 'no' \
-		&& ok "ucode fill_missing_band idempotent" || bad "ucode fill_missing_band idempotent"
-	printf '%s\n' "$band_out" | sed -n '7p' | grep -qx 'EHT20' \
-		&& ok "ucode radio_htmode 2G width 20" || bad "ucode radio_htmode 2G"
-	printf '%s\n' "$band_out" | sed -n '8p' | grep -qx 'null' \
-		&& ok "ucode board_band_defaults miss" || bad "ucode board_band_defaults miss"
+) || ht_out=""
+	printf '%s\n' "$ht_out" | sed -n '1p' | grep -qx 'EHT20' \
+		&& ok "ucode radio_htmode 2G width 20" || bad "ucode radio_htmode 2G ($ht_out)"
+	printf '%s\n' "$ht_out" | sed -n '2p' | grep -qx 'EHT80' \
+		&& ok "ucode radio_htmode 5G cap 80" || bad "ucode radio_htmode 5G"
+	printf '%s\n' "$ht_out" | sed -n '3p' | grep -qx 'NOHT' \
+		&& ok "ucode radio_htmode null band" || bad "ucode radio_htmode null"
 else
 	ok "ucode tests skipped (ucode not installed)"
 fi

@@ -717,62 +717,6 @@ EOF
 	radio=$idx
 }
 
-# Restore band/channel/htmode from board.json when LuCI wiped them (iwinfo
-# freqlist does not accept UCI section names like radio1 on multi-radio phys).
-# Sets BAND_REPAIRED=1 when shell vars were filled; UCI persist is separate.
-mac80211_fill_band_from_board() {
-	local out script ht
-
-	BAND_REPAIRED=
-	[ -n "$hwmac" ] || return 0
-	[ -z "$band" ] || return 0
-	case "$hwmac" in
-	*[!0-9A-Fa-f:]*) return 0 ;;
-	esac
-
-	script="${RADIO_MAC_SCRIPT:-/usr/share/hostap/radio-mac.uc}"
-	[ -f "$script" ] || return 0
-
-	out="$(ucode - <<EOF
-import { board_band_defaults } from "${script}";
-let d = board_band_defaults("${hwmac}");
-if (d) {
-	print(d.band);
-	print(d.channel);
-	print(d.htmode ?? "");
-}
-EOF
-)" || return 0
-
-	[ -n "$out" ] || return 0
-	band=$(printf '%s\n' "$out" | sed -n '1p')
-	[ -n "$band" ] || return 0
-	case "$channel" in
-	""|0) channel=$(printf '%s\n' "$out" | sed -n '2p') ;;
-	esac
-	ht=$(printf '%s\n' "$out" | sed -n '3p')
-	[ -n "$htmode" ] || htmode=$ht
-	BAND_REPAIRED=1
-	echo "wifi-scripts: Repaired missing band=$band ch=$channel from board.json"
-}
-
-# Write repaired band after bring-up.  uci commit does not reload wifi.
-# $1 = wifi-device section name.
-mac80211_persist_repaired_band() {
-	local section="$1"
-
-	[ -n "$BAND_REPAIRED" ] || return 0
-	[ -n "$band" ] || return 0
-	case "$section" in
-	""|*[!A-Za-z0-9_]*) return 0 ;;
-	esac
-
-	uci -q set "wireless.${section}.band=$band"
-	[ -n "$channel" ] && uci -q set "wireless.${section}.channel=$channel"
-	[ -n "$htmode" ] && uci -q set "wireless.${section}.htmode=$htmode"
-	uci -q commit wireless
-}
-
 # Serialize hostapd on multi-radio phys via phy-setup-lock.uc (same as ucode backend).
 mac80211_phy_setup_lock_acquire() {
 	local phy="$1"
@@ -1326,7 +1270,6 @@ drv_mac80211_setup() {
 	}
 
 	mac80211_resolve_radio
-	mac80211_fill_band_from_board
 	mac80211_set_suffix
 
 	set_default ifname_prefix "$phy$vif_phy_suffix-"
@@ -1415,7 +1358,6 @@ drv_mac80211_setup() {
 
 	for_each_interface "ap sta adhoc mesh monitor" mac80211_set_vif_txpower
 	wireless_set_up
-	mac80211_persist_repaired_band "$1"
 }
 
 _list_phy_interfaces() {

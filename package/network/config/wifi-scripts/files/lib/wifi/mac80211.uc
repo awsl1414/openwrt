@@ -99,8 +99,10 @@ function sync_radio_section(name, radio_idx, hwmac, band_name, channel, htmode) 
 	if (hwmac && normalize_mac(s.hwmac) != hwmac)
 		uci_set(name, "hwmac", hwmac);
 	/*
-	 * Incomplete sections (missing band) make hostapd fall back to hw_mode=g
-	 * with channel 0 — AP-DISABLED on 5/6 GHz radios. Repair from board.json.
+	 * Incomplete sections (missing band) after upgrade / partial UCI make
+	 * hostapd fall back to hw_mode=g with channel 0 — AP-DISABLED on 5/6 GHz.
+	 * Repair on wifi config sync from board.json (not a setup-time workaround;
+	 * LuCI freqlist must use libiwinfo hwmac resolution).
 	 */
 	if (band_name && !s.band)
 		uci_set(name, "band", band_name);

@@ -189,29 +189,48 @@ require_grep "package/kernel/mac80211/Makefile" \
 	'^PKG_RELEASE:=' \
 	"mac80211 PKG_RELEASE present"
 require_grep "package/network/config/wifi-scripts/Makefile" \
-	'^PKG_RELEASE:=5$' \
-	"wifi-scripts PKG_RELEASE bumped for setup-time band repair"
+	'^PKG_RELEASE:=6$' \
+	"wifi-scripts PKG_RELEASE after dropping setup band repair"
+require_file "package/network/utils/iwinfo/patches/101-uci-hwmac-freqlist-radio.patch"
+require_grep "package/network/utils/iwinfo/Makefile" \
+	'^PKG_RELEASE:=2$' \
+	"libiwinfo PKG_RELEASE bumped for hwmac freqlist"
+require_grep "package/network/utils/iwinfo/patches/101-uci-hwmac-freqlist-radio.patch" \
+	'nl80211_phy_idx_from_hwmac' \
+	"iwinfo resolves wifi-device via hwmac"
+require_grep "package/network/utils/iwinfo/patches/101-uci-hwmac-freqlist-radio.patch" \
+	'nl80211_is_hwmac' \
+	"iwinfo validates hex hwmac like radio-mac.uc"
+require_grep "package/network/utils/iwinfo/patches/101-uci-hwmac-freqlist-radio.patch" \
+	'FREQ_RANGE may appear multiple times' \
+	"iwinfo filters freqlist by WIPHY_RADIO ranges"
+require_grep "package/network/utils/iwinfo/patches/101-uci-hwmac-freqlist-radio.patch" \
+	'keep unfiltered phy-wide list' \
+	"iwinfo soft-falls back when WIPHY_RADIOS missing"
+require_grep "package/network/utils/iwinfo/patches/101-uci-hwmac-freqlist-radio.patch" \
+	'nl80211_freqlist_want_radio' \
+	"iwinfo selects radio filter for UCI/netdev"
 require_grep "package/network/config/wifi-scripts/files/lib/wifi/mac80211.uc" \
 	'Incomplete sections \(missing band\)' \
-	"mac80211.uc repairs missing wifi-device.band"
+	"mac80211.uc repairs missing wifi-device.band on wifi config"
 require_grep "package/network/config/wifi-scripts/files/lib/wifi/mac80211.uc" \
 	'create_name_order = \[ "2G", "5G", "6G" \]' \
 	"mac80211.uc creates radio0=2g radio1=5g radio2=6g"
-require_grep "package/network/config/wifi-scripts/files/usr/share/hostap/radio-mac.uc" \
-	'fill_missing_band_from_board' \
-	"radio-mac.uc fills missing band at setup"
 require_grep "package/network/config/wifi-scripts/files/usr/share/hostap/radio-mac.uc" \
 	'export function radio_htmode' \
 	"radio-mac.uc exports shared radio_htmode"
 require_grep "package/network/config/wifi-scripts/files/lib/wifi/mac80211.uc" \
 	'import { normalize_mac, radio_htmode }' \
 	"mac80211.uc reuses radio_htmode from radio-mac"
-require_grep "package/network/config/wifi-scripts/files-ucode/lib/netifd/wireless/mac80211.sh" \
-	'fill_missing_band_from_board' \
-	"ucode setup repairs missing band before hwmode fallback"
-require_grep "package/network/config/wifi-scripts/files-ucode/lib/netifd/wireless/mac80211.sh" \
-	'persist_repaired_band' \
-	"ucode setup defers UCI persist of repaired band"
+if grep -qE 'fill_missing_band_from_board|board_band_defaults|persist_repaired_band|mac80211_fill_band_from_board' \
+	"$repo_root/package/network/config/wifi-scripts/files/usr/share/hostap/radio-mac.uc" \
+	"$repo_root/package/network/config/wifi-scripts/files-ucode/lib/netifd/wireless/mac80211.sh" \
+	"$repo_root/package/network/config/wifi-scripts/files/lib/netifd/wireless/mac80211.sh"
+then
+	bad "setup-time band repair removed (libiwinfo owns freqlist)"
+else
+	ok "no setup-time band repair leftover"
+fi
 require_grep "package/network/config/wifi-scripts/files/usr/share/hostap/wifi-detect.uc" \
 	'entry\.hwmac' \
 	"wifi-detect records per-radio hwmac"
