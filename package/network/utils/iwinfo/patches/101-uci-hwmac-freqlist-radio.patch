@@ -10,10 +10,11 @@
  
  #include "iwinfo_nl80211.h"
  
-@@ -395,6 +397,86 @@
+@@ -394,7 +397,141 @@
+ 
  	return idx;
  }
- 
++
 +/* Match radio-mac.uc normalize_mac: only hex MACs occupy radio indices. */
 +static bool nl80211_is_hwmac(const char *mac)
 +{
@@ -48,7 +49,7 @@
 +	glob_t gl;
 +	FILE *fp;
 +	int i, lineno, phyidx = -1;
-+
+ 
 +	if (radio_idx)
 +		*radio_idx = -1;
 +
@@ -94,35 +95,95 @@
 +	return -1;
 +}
 +
++
++/* addresses[radio_idx] for a given wiphy index (hex lines only). */
++static int nl80211_phy_mac_at(int phyidx, int radio_idx, char *buf, size_t buflen)
++{
++	char path[128], line[64];
++	glob_t gl;
++	FILE *fp;
++	int i, lineno;
++
++	if (phyidx < 0 || radio_idx < 0 || !buf || buflen < 18)
++		return -1;
++
++	buf[0] = '\0';
++	snprintf(path, sizeof(path), "/sys/class/ieee80211/*");
++	if (glob(path, 0, NULL, &gl))
++		return -1;
++
++	for (i = 0; i < gl.gl_pathc; i++) {
++		snprintf(path, sizeof(path), "%s/index", gl.gl_pathv[i]);
++		if (nl80211_readint(path) != phyidx)
++			continue;
++
++		snprintf(path, sizeof(path), "%s/addresses", gl.gl_pathv[i]);
++		fp = fopen(path, "r");
++		if (!fp)
++			break;
++
++		lineno = 0;
++		while (fgets(line, sizeof(line), fp)) {
++			size_t n = strlen(line);
++
++			while (n > 0 && (line[n - 1] == '\n' || line[n - 1] == '\r'))
++				line[--n] = '\0';
++
++			if (!nl80211_is_hwmac(line))
++				continue;
++
++			if (lineno == radio_idx) {
++				snprintf(buf, buflen, "%s", line);
++				fclose(fp);
++				globfree(&gl);
++				return 0;
++			}
++			lineno++;
++		}
++
++		fclose(fp);
++		break;
++	}
++
++	globfree(&gl);
++	return -1;
++}
++
  static int nl80211_phy_idx_from_phy(const char *opt)
  {
  	char buf[128];
-@@ -406,11 +488,14 @@
+@@ -406,34 +543,78 @@
  	return nl80211_readint(buf);
  }
  
 -static int nl80211_phy_idx_from_uci(const char *name)
-+static int nl80211_phy_idx_from_uci_ex(const char *name, int *radio_idx)
++static int nl80211_phy_idx_from_uci_ex(const char *name, int *radio_idx,
++				       char *hwmac_out, size_t hwmac_len)
  {
  	struct uci_section *s;
  	const char *opt;
 -	int idx = -1;
 +	int idx = -1, ridx = -1;
-+
+ 
 +	if (radio_idx)
 +		*radio_idx = -1;
- 
++	if (hwmac_out && hwmac_len)
++		hwmac_out[0] = '\0';
++
  	s = iwinfo_uci_get_radio(name, "mac80211");
  	if (!s)
-@@ -418,22 +503,53 @@
+ 		goto out;
  
  	opt = uci_lookup_option_string(uci_ctx, s, "path");
  	idx = nl80211_phy_idx_from_path(opt);
 +
 +	/* hwmac is permanent radio identity (not BSSID macaddr). */
 +	opt = uci_lookup_option_string(uci_ctx, s, "hwmac");
-+	if (opt) {
++	if (opt && nl80211_is_hwmac(opt)) {
 +		int hw_phy = nl80211_phy_idx_from_hwmac(opt, &ridx);
++
++		if (hwmac_out && hwmac_len >= 18)
++			snprintf(hwmac_out, hwmac_len, "%s", opt);
 +
 +		if (hw_phy >= 0) {
 +			idx = hw_phy;
@@ -158,22 +219,77 @@
 +	}
 +
  out:
++	if (hwmac_out && hwmac_len >= 18 && !hwmac_out[0] &&
++	    idx >= 0 && radio_idx && *radio_idx >= 0)
++		nl80211_phy_mac_at(idx, *radio_idx, hwmac_out, hwmac_len);
++
  	iwinfo_uci_free();
  	return idx;
  }
  
 +static int nl80211_phy_idx_from_uci(const char *name)
 +{
-+	return nl80211_phy_idx_from_uci_ex(name, NULL);
++	return nl80211_phy_idx_from_uci_ex(name, NULL, NULL, 0);
 +}
 +
  static bool nl80211_is_ifname(const char *name)
  {
  	struct stat st;
-@@ -3217,11 +3333,93 @@
- 	return -1;
- }
+@@ -813,8 +994,9 @@
  
+ static char * nl80211_phy2ifname(const char *ifname)
+ {
+-	int ifidx = -1, cifidx, lmode = 1, clmode, phyidx;
++	int ifidx = -1, cifidx, lmode = 1, clmode, phyidx, want_radio = -1;
+ 	char buffer[512];
++	char want_mac[18] = "";
+ 	static char nif[IFNAMSIZ] = { 0 };
+ 	DIR *d;
+ 	struct dirent *e;
+@@ -825,10 +1007,18 @@
+ 
+ 	phyidx = nl80211_phy_idx_from_phy(ifname);
+ 	if (phyidx < 0)
+-		phyidx = nl80211_phy_idx_from_uci(ifname);;
++		phyidx = nl80211_phy_idx_from_uci_ex(ifname, &want_radio,
++						     want_mac, sizeof(want_mac));
+ 	if (phyidx < 0)
+ 		return NULL;
+ 
++	/*
++	 * Multi-radio wiphy: UCI section must map to that radio's netdev
++	 * (hwmac ↔ address). Never fall back to the lowest ifindex on the phy.
++	 */
++	if (want_radio >= 0 && !want_mac[0])
++		return NULL;
++
+ 	memset(nif, 0, sizeof(nif));
+ 
+ 	if ((d = opendir("/sys/class/net")) != NULL)
+@@ -840,6 +1030,17 @@
+ 			if (nl80211_readint(buffer) != phyidx)
+ 				continue;
+ 
++			if (want_radio >= 0) {
++				char addr[32];
++
++				snprintf(buffer, sizeof(buffer),
++					 "/sys/class/net/%s/address", e->d_name);
++				if (nl80211_readstr(buffer, addr, sizeof(addr)) <= 0)
++					continue;
++				if (strcasecmp(addr, want_mac))
++					continue;
++			}
++
+ 			snprintf(buffer, sizeof(buffer),
+ 			         "/sys/class/net/%s/ifindex", e->d_name);
+ 			cifidx = nl80211_readint(buffer);
+@@ -3215,13 +3416,95 @@
+ 	}
+ 
+ 	return -1;
++}
++
 +#define NL80211_FREQLIST_MAX_RANGES 8
 +
 +struct nl80211_freqlist_ctx {
@@ -201,8 +317,8 @@
 +	}
 +
 +	return false;
-+}
-+
+ }
+ 
 +static void nl80211_freqlist_parse_radios(struct nlattr *radios,
 +					 struct nl80211_freqlist_ctx *ctx)
 +{
@@ -265,7 +381,7 @@
  	struct iwinfo_freqlist_entry *e;
  
  	struct nlattr **attr = nl80211_parse(msg);
-@@ -3229,83 +3427,153 @@
+@@ -3229,83 +3512,153 @@
  	struct nlattr *freqs[NL80211_FREQUENCY_ATTR_MAX + 1];
  	struct nlattr *band, *freq;
  
@@ -273,7 +389,9 @@
 -	e += arr->count;
 +	if (attr[NL80211_ATTR_WIPHY_RADIOS])
 +		nl80211_freqlist_parse_radios(attr[NL80211_ATTR_WIPHY_RADIOS], ctx);
-+
+ 
+-	if (attr[NL80211_ATTR_WIPHY_BANDS]) {
+-		nla_for_each_nested(band, attr[NL80211_ATTR_WIPHY_BANDS], bands_remain)
 +	if (!attr[NL80211_ATTR_WIPHY_BANDS])
 +		return NL_SKIP;
 +
@@ -284,9 +402,7 @@
 +
 +		if (!bands[NL80211_BAND_ATTR_FREQS])
 +			continue;
- 
--	if (attr[NL80211_ATTR_WIPHY_BANDS]) {
--		nla_for_each_nested(band, attr[NL80211_ATTR_WIPHY_BANDS], bands_remain)
++
 +		nla_for_each_nested(freq, bands[NL80211_BAND_ATTR_FREQS], freqs_remain)
  		{
 -			nla_parse(bands, NL80211_BAND_ATTR_MAX,
@@ -300,18 +416,20 @@
 -						  nla_data(freq), nla_len(freq), NULL);
 +			if (ctx->count >= ctx->tmp_max)
 +				return NL_SKIP;
-+
-+			nla_parse(freqs, NL80211_FREQUENCY_ATTR_MAX,
-+				  nla_data(freq), nla_len(freq), NULL);
  
 -					if (!freqs[NL80211_FREQUENCY_ATTR_FREQ] ||
 -					    freqs[NL80211_FREQUENCY_ATTR_DISABLED])
 -						continue;
--
++			nla_parse(freqs, NL80211_FREQUENCY_ATTR_MAX,
++				  nla_data(freq), nla_len(freq), NULL);
+ 
 -					e->band = nl80211_get_band(band->nla_type);
 -					e->mhz = nla_get_u32(freqs[NL80211_FREQUENCY_ATTR_FREQ]);
 -					e->channel = nl80211_freq2channel(e->mhz);
--
++			if (!freqs[NL80211_FREQUENCY_ATTR_FREQ] ||
++			    freqs[NL80211_FREQUENCY_ATTR_DISABLED])
++				continue;
+ 
 -					if (freqs[NL80211_FREQUENCY_ATTR_NO_HT40_MINUS])
 -						e->flags |= IWINFO_FREQ_NO_HT40MINUS;
 -					if (freqs[NL80211_FREQUENCY_ATTR_NO_HT40_PLUS])
@@ -331,24 +449,20 @@
 -						e->flags |= IWINFO_FREQ_NO_IR;
 -					if (freqs[NL80211_FREQUENCY_ATTR_INDOOR_ONLY])
 -						e->flags |= IWINFO_FREQ_INDOOR_ONLY;
-+			if (!freqs[NL80211_FREQUENCY_ATTR_FREQ] ||
-+			    freqs[NL80211_FREQUENCY_ATTR_DISABLED])
-+				continue;
++			mhz = nla_get_u32(freqs[NL80211_FREQUENCY_ATTR_FREQ]);
  
 -					/* keep backwards compatibility */
 -					e->restricted = (e->flags & IWINFO_FREQ_NO_IR) ? 1 : 0;
-+			mhz = nla_get_u32(freqs[NL80211_FREQUENCY_ATTR_FREQ]);
- 
--					e++;
--					arr->count++;
--				}
--			}
 +			e = &ctx->tmp[ctx->count];
 +			memset(e, 0, sizeof(*e));
 +			e->band = nl80211_get_band(band->nla_type);
 +			e->mhz = mhz;
 +			e->channel = nl80211_freq2channel(e->mhz);
-+
+ 
+-					e++;
+-					arr->count++;
+-				}
+-			}
 +			if (freqs[NL80211_FREQUENCY_ATTR_NO_HT40_MINUS])
 +				e->flags |= IWINFO_FREQ_NO_HT40MINUS;
 +			if (freqs[NL80211_FREQUENCY_ATTR_NO_HT40_PLUS])
@@ -377,7 +491,7 @@
  	return NL_SKIP;
  }
  
-+static int nl80211_freqlist_want_radio(const char *ifname)
++static int nl80211_want_radio(const char *ifname)
 +{
 +	struct nl80211_if_data data = {};
 +	int radio_idx = -1;
@@ -397,7 +511,7 @@
 +		return -1;
 +
 +	/* UCI wifi-device section: hwmac line index / option radio. */
-+	if (nl80211_phy_idx_from_uci_ex(ifname, &radio_idx) >= 0)
++	if (nl80211_phy_idx_from_uci_ex(ifname, &radio_idx, NULL, 0) >= 0)
 +		return radio_idx;
 +
 +	return -1;
@@ -411,14 +525,14 @@
 +		.tmp = (struct iwinfo_freqlist_entry *)buf,
 +		.tmp_max = IWINFO_BUFSIZE / sizeof(struct iwinfo_freqlist_entry),
 +		.count = 0,
-+		.want_radio = nl80211_freqlist_want_radio(ifname),
++		.want_radio = nl80211_want_radio(ifname),
 +	};
  	uint32_t features = nl80211_get_protocol_features(ifname);
 -	int flags;
 +	int flags, i, out = 0;
 +	struct iwinfo_freqlist_entry *dst = (struct iwinfo_freqlist_entry *)buf;
 +	struct iwinfo_freqlist_entry *heap = NULL;
-+
+ 
 +	/*
 +	 * When filtering by radio, collect into a heap copy first so split
 +	 * WIPHY dumps can reorder radios vs bands without corrupting output.
@@ -429,7 +543,7 @@
 +			goto out;
 +		ctx.tmp = heap;
 +	}
- 
++
  	flags = features & NL80211_PROTOCOL_FEATURE_SPLIT_WIPHY_DUMP ? NLM_F_DUMP : 0;
  	cv = nl80211_msg(ifname, NL80211_CMD_GET_WIPHY, flags);
  	if (!cv)
@@ -441,7 +555,8 @@
 -		goto out;
 +	if (nl80211_send(cv, nl80211_get_freqlist_cb, &ctx))
 +		goto out_free;
-+
+ 
+-	*len = arr.count * sizeof(struct iwinfo_freqlist_entry);
 +	/*
 +	 * want_radio set but no WIPHY_RADIOS ranges (old kernel / parse miss):
 +	 * keep unfiltered phy-wide list rather than returning empty.
@@ -456,8 +571,7 @@
 +	} else {
 +		out = ctx.count;
 +	}
- 
--	*len = arr.count * sizeof(struct iwinfo_freqlist_entry);
++
 +	*len = out * sizeof(struct iwinfo_freqlist_entry);
 +	free(heap);
  	return 0;

@@ -192,10 +192,9 @@ require_grep "package/network/config/wifi-scripts/Makefile" \
 	'^PKG_RELEASE:=6$' \
 	"wifi-scripts PKG_RELEASE after dropping setup band repair"
 require_file "package/network/utils/iwinfo/patches/101-uci-hwmac-freqlist-radio.patch"
-require_file "package/network/utils/iwinfo/patches/102-uci-hwmac-phy2ifname-radio.patch"
 require_grep "package/network/utils/iwinfo/Makefile" \
-	'^PKG_RELEASE:=3$' \
-	"libiwinfo PKG_RELEASE bumped for hwmac phy2ifname"
+	'^PKG_RELEASE:=4$' \
+	"libiwinfo PKG_RELEASE for multi-radio UCI hwmac"
 require_grep "package/network/utils/iwinfo/patches/101-uci-hwmac-freqlist-radio.patch" \
 	'nl80211_phy_idx_from_hwmac' \
 	"iwinfo resolves wifi-device via hwmac"
@@ -209,14 +208,29 @@ require_grep "package/network/utils/iwinfo/patches/101-uci-hwmac-freqlist-radio.
 	'keep unfiltered phy-wide list' \
 	"iwinfo soft-falls back when WIPHY_RADIOS missing"
 require_grep "package/network/utils/iwinfo/patches/101-uci-hwmac-freqlist-radio.patch" \
-	'nl80211_freqlist_want_radio' \
+	'nl80211_want_radio' \
 	"iwinfo selects radio filter for UCI/netdev"
-require_grep "package/network/utils/iwinfo/patches/102-uci-hwmac-phy2ifname-radio.patch" \
-	'nl80211_uci_want_mac' \
-	"iwinfo maps UCI section to radio netdev via hwmac"
-require_grep "package/network/utils/iwinfo/patches/102-uci-hwmac-phy2ifname-radio.patch" \
-	'nl80211_phy_idx_from_uci_ex' \
-	"phy2ifname resolves radio index from UCI"
+require_grep "package/network/utils/iwinfo/patches/101-uci-hwmac-freqlist-radio.patch" \
+	'nl80211_phy_mac_at' \
+	"iwinfo shares addresses[] MAC lookup"
+require_grep "package/network/utils/iwinfo/patches/101-uci-hwmac-freqlist-radio.patch" \
+	'Never fall back to the lowest ifindex' \
+	"phy2ifname does not fall back to wrong radio iface"
+require_grep "package/network/utils/iwinfo/patches/101-uci-hwmac-freqlist-radio.patch" \
+	'hwmac_out' \
+	"uci_ex returns hwmac without second UCI open"
+if [ -f "$repo_root/package/network/utils/iwinfo/patches/102-uci-hwmac-phy2ifname-radio.patch" ]; then
+	bad "102 patch merged into 101"
+else
+	ok "no split 102 patch leftover"
+fi
+if grep -q 'nl80211_uci_want_mac\|nl80211_freqlist_want_radio' \
+	"$repo_root/package/network/utils/iwinfo/patches/101-uci-hwmac-freqlist-radio.patch"
+then
+	bad "old duplicate helpers removed from 101"
+else
+	ok "no duplicate uci_want_mac/freqlist_want_radio helpers"
+fi
 require_grep "package/network/config/wifi-scripts/files/lib/wifi/mac80211.uc" \
 	'Incomplete sections \(missing band\)' \
 	"mac80211.uc repairs missing wifi-device.band on wifi config"
