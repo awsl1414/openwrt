@@ -91,6 +91,15 @@ require_grep "scripts/sbe1v1k/build-arch.sh" \
 	'COMMUNITY_THEME_REPOS' \
 	"build-arch lists COMMUNITY_THEME_REPOS"
 require_grep "scripts/sbe1v1k/build-arch.sh" \
+	'init_community_theme_packages' \
+	"build-arch derives theme packages from REPOS"
+require_grep "scripts/sbe1v1k/build-arch.sh" \
+	'prune_community_theme_trees' \
+	"build-arch prunes theme trees without --themes"
+require_grep "scripts/sbe1v1k/build-arch.sh" \
+	'prune_config_backups' \
+	"build-arch rotates .config.bak.*"
+require_grep "scripts/sbe1v1k/build-arch.sh" \
 	'apply_community_themes_config' \
 	"build-arch applies themes via --themes"
 require_grep "scripts/sbe1v1k/build-arch.sh" \
@@ -121,6 +130,9 @@ fi
 require_grep "scripts/sbe1v1k/build-arch.sh" \
 	'assert_no_community_themes_in_config' \
 	"build-arch refuses leftover themes without --themes"
+require_grep "scripts/sbe1v1k/build-arch.sh" \
+	'theme_i18n_package' \
+	"build-arch asserts leftover theme i18n via theme_i18n_package"
 # Guard against set -e abort: false ((KEEP_CONFIG)) && … as last stmt in a function.
 if grep -nE '^\s*\(\(KEEP_CONFIG\)\)\s*&&' "$repo_root/scripts/sbe1v1k/build-arch.sh" \
 	| grep -q .; then
@@ -133,6 +145,20 @@ if grep -qE -e '--skip-themes' "$repo_root/scripts/sbe1v1k/build-arch.sh"; then
 	bad "build-arch must not keep --skip-themes"
 else
 	ok "build-arch has no --skip-themes"
+fi
+# OpenWrt has no make olddefconfig target (%:: recurses and fails).
+if grep -E '^[[:space:]]*make[[:space:]]+olddefconfig' "$repo_root/scripts/sbe1v1k/build-arch.sh" \
+	| grep -qvE '^[[:space:]]*#'; then
+	bad "build-arch must use make defconfig, not olddefconfig"
+else
+	ok "build-arch does not call make olddefconfig"
+fi
+# No hand-maintained package list parallel to REPOS (only empty init + derive).
+if grep -nE '^COMMUNITY_THEME_PACKAGES=\(' "$repo_root/scripts/sbe1v1k/build-arch.sh" \
+	| grep -v 'COMMUNITY_THEME_PACKAGES=()' | grep -q .; then
+	bad "COMMUNITY_THEME_PACKAGES must be derived from REPOS, not a second list"
+else
+	ok "COMMUNITY_THEME_PACKAGES derived from REPOS only"
 fi
 # daily seed must not force community themes / theme config apps
 if grep -qE \

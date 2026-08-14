@@ -64,13 +64,8 @@ COMMUNITY_THEME_REPOS=(
 	'luci-app-alpha-config|https://github.com/derisamedia/luci-app-alpha-config.git|83fe832a325f9d5c3b434922320e7c1d859f614b'
 )
 
-COMMUNITY_THEME_PACKAGES=(
-	luci-theme-aurora
-	luci-theme-argon
-	luci-app-argon-config
-	luci-theme-alpha
-	luci-app-alpha-config
-)
+# Filled by init_community_theme_packages from REPOS names (single source of truth).
+COMMUNITY_THEME_PACKAGES=()
 
 # Extra CONFIG_PACKAGE_* required when --themes is set (argon/apk).
 COMMUNITY_THEME_DEPS=(
@@ -82,6 +77,9 @@ COMMUNITY_THEME_DEPS=(
 # Filled at fetch: luci-i18n-*-zh-cn only when that package tree has po/zh_Hans (official).
 # Never invent i18n for aurora/argon/alpha theme shells (no po/ in upstream pins).
 COMMUNITY_THEME_I18N=()
+
+# How many .config.bak.* files to keep after seed apply.
+CONFIG_BAK_KEEP="${CONFIG_BAK_KEEP:-3}"
 
 log() {
 	if [[ -t 1 ]]; then
@@ -326,6 +324,34 @@ theme_i18n_package() {
 	esac
 }
 
+# Derive package names from COMMUNITY_THEME_REPOS (avoid a second hand-maintained list).
+init_community_theme_packages() {
+	local entry name
+	COMMUNITY_THEME_PACKAGES=()
+	for entry in "${COMMUNITY_THEME_REPOS[@]}"; do
+		IFS='|' read -r name _url _sha <<<"$entry"
+		[[ -n "$name" && -n "$_url" && -n "$_sha" ]] || die "bad COMMUNITY_THEME_REPOS entry: $entry"
+		COMMUNITY_THEME_PACKAGES+=("$name")
+	done
+	((${#COMMUNITY_THEME_PACKAGES[@]} > 0)) || die "COMMUNITY_THEME_REPOS is empty"
+}
+
+# Without --themes, drop leftover clones so they are not scanned into the build.
+prune_community_theme_trees() {
+	local pkg dest
+	((${#COMMUNITY_THEME_PACKAGES[@]})) || init_community_theme_packages
+	for pkg in "${COMMUNITY_THEME_PACKAGES[@]}"; do
+		dest="package/$pkg"
+		[[ -e "$dest" ]] || continue
+		if [[ -d "$dest/.git" ]]; then
+			log "Removing leftover community theme tree (no --themes): $dest"
+			rm -rf -- "$dest"
+		else
+			die "leftover $dest is not a git clone from this script; remove it or pass --themes"
+		fi
+	done
+}
+
 fetch_community_themes() {
 	local entry name url sha dest head i18n
 	COMMUNITY_THEME_I18N=()
@@ -377,9 +403,22 @@ config_force_y() {
 	printf '%s=y\n' "$sym" >> .config
 }
 
+# Keep only the newest CONFIG_BAK_KEEP backups of .config.
+prune_config_backups() {
+	local -a baks=()
+	local keep="$CONFIG_BAK_KEEP" old
+	[[ "$keep" =~ ^[0-9]+$ ]] || keep=3
+	mapfile -t baks < <(ls -1t .config.bak.* 2>/dev/null || true)
+	((${#baks[@]} > keep)) || return 0
+	old=("${baks[@]:keep}")
+	log "Pruning ${#old[@]} old .config.bak.* (keep $keep)"
+	rm -f -- "${old[@]}"
+}
+
 # Opt-in: themes + deps + only upstream-provided zh-cn i18n; hard-fail if missing.
 apply_community_themes_config() {
 	local pkg
+	((${#COMMUNITY_THEME_PACKAGES[@]})) || init_community_theme_packages
 	[[ -f .config ]] || die "apply_community_themes_config requires .config"
 	[[ -f feeds/luci/luci.mk ]] || \
 		die "feeds/luci/luci.mk missing; run feeds update/install before --themes"
@@ -398,25 +437,32 @@ apply_community_themes_config() {
 	for pkg in "${COMMUNITY_THEME_PACKAGES[@]}" "${COMMUNITY_THEME_DEPS[@]}" "${COMMUNITY_THEME_I18N[@]}"; do
 		config_force_y "CONFIG_PACKAGE_${pkg}"
 	done
-	make olddefconfig || die "make olddefconfig failed after --themes"
+	# OpenWrt has no make olddefconfig target; defconfig re-reads .config and
+	# fills unset symbols (same path as seed apply).
+	make defconfig || die "make defconfig failed after --themes"
 
 	for pkg in "${COMMUNITY_THEME_PACKAGES[@]}" "${COMMUNITY_THEME_DEPS[@]}" "${COMMUNITY_THEME_I18N[@]}"; do
 		grep -q "^CONFIG_PACKAGE_${pkg}=y" .config || \
-			die "--themes: CONFIG_PACKAGE_${pkg}=y missing after olddefconfig"
+			die "--themes: CONFIG_PACKAGE_${pkg}=y missing after defconfig"
 	done
 	if ((${#COMMUNITY_THEME_I18N[@]})); then
 		grep -q '^CONFIG_LUCI_LANG_zh_Hans=y' .config || \
-			die "--themes: CONFIG_LUCI_LANG_zh_Hans=y missing after olddefconfig (required for i18n)"
+			die "--themes: CONFIG_LUCI_LANG_zh_Hans=y missing after defconfig (required for i18n)"
 	fi
 }
 
-# --keep-config without --themes must not leave community themes enabled.
+# --keep-config without --themes must not leave community themes / their i18n enabled.
 assert_no_community_themes_in_config() {
-	local pkg
+	local pkg i18n
 	[[ -f .config ]] || return 0
+	((${#COMMUNITY_THEME_PACKAGES[@]})) || init_community_theme_packages
 	for pkg in "${COMMUNITY_THEME_PACKAGES[@]}"; do
 		if grep -q "^CONFIG_PACKAGE_${pkg}=y" .config; then
 			die "CONFIG_PACKAGE_${pkg}=y in .config; pass --themes or remove theme packages"
+		fi
+		i18n="$(theme_i18n_package "$pkg")"
+		if grep -q "^CONFIG_PACKAGE_${i18n}=y" .config; then
+			die "CONFIG_PACKAGE_${i18n}=y in .config; pass --themes or clear leftover i18n"
 		fi
 	done
 }
@@ -425,13 +471,14 @@ apply_seed_config() {
 	if ((KEEP_CONFIG)); then
 		[[ -f .config ]] || die "--keep-config requires an existing .config"
 		log "Keeping existing .config (--keep-config)"
-		make olddefconfig || die "make olddefconfig failed; fix .config or drop --keep-config"
+		make defconfig || die "make defconfig failed; fix .config or drop --keep-config"
 	else
 		log "Applying seed → defconfig ($(basename "$SEED_CONFIG"))"
 		if [[ -f .config ]]; then
 			local bak=".config.bak.$(date +%Y%m%d-%H%M%S)"
 			cp -a .config "$bak"
 			log "Backed up previous .config → $bak"
+			prune_config_backups
 		fi
 		cp "$SEED_CONFIG" .config
 		make defconfig
@@ -470,6 +517,7 @@ git_pull_ff() {
 }
 
 cd "$OPENWRT_DIR"
+init_community_theme_packages
 
 log "OpenWrt: $OPENWRT_DIR"
 printf 'Jobs: %s\nBranch: %s\nSeed: %s\n' "$JOBS" "$BRANCH" "$SEED_CONFIG"
@@ -531,6 +579,8 @@ fi
 # After feeds so feeds/luci/luci.mk exists when packages are scanned/compiled.
 if ((THEMES)); then
 	fetch_community_themes
+else
+	prune_community_theme_trees
 fi
 
 apply_seed_config
