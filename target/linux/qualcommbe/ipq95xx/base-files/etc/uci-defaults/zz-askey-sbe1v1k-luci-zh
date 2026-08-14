@@ -1,0 +1,23 @@
+#!/bin/sh
+# Default LuCI UI to Simplified Chinese when zh-cn i18n is present.
+# Filename zz-* so it runs after luci-i18n-*-zh-cn uci-defaults
+# (those register luci.languages.zh_cn).
+
+[ -f /etc/config/luci ] || exit 0
+
+. /lib/functions.sh
+
+case "$(board_name)" in
+askey,sbe1v1k) ;;
+*) exit 0 ;;
+esac
+
+uci -q get luci.languages.zh_cn >/dev/null || exit 0
+
+lang="$(uci -q get luci.main.lang)"
+[ -z "$lang" ] || [ "$lang" = "auto" ] || [ "$lang" = "en" ] || exit 0
+
+uci -q set luci.main.lang=zh_cn
+uci commit luci
+
+exit 0
