@@ -2,6 +2,7 @@
 'use strict';
 import { readfile, writefile, realpath, glob, basename, unlink, open, rename } from "fs";
 import { is_equal } from "/usr/share/hostap/common.uc";
+import { read_phy_addresses } from "/usr/share/hostap/radio-mac.uc";
 let nl = require("nl80211");
 
 let board_file = "/etc/board.json";
@@ -107,6 +108,8 @@ function wiphy_detect() {
 			radios: []
 		};
 
+		let addrs = read_phy_addresses(name);
+
 		for (let radio in phy.radios) {
 			// S1G is not supported yet
 			radio.freq_ranges = filter(radio.freq_ranges,
@@ -116,13 +119,19 @@ function wiphy_detect() {
 			if (!length(radio.freq_ranges))
 				continue;
 
-			push(info.radios, {
+			let entry = {
 				index: radio.index,
 				freq_ranges: map(radio.freq_ranges,
 					(range) => [ range.start, range.end ]
 				),
 				bands: {}
-			});
+			};
+
+			/* addresses[i] must match wiphy radio index i (driver contract). */
+			if (radio.index != null && radio.index < length(addrs))
+				entry.hwmac = addrs[radio.index];
+
+			push(info.radios, entry);
 		}
 
 		let bands = info.bands;

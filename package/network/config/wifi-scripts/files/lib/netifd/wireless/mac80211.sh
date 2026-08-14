@@ -27,6 +27,7 @@ drv_mac80211_init_device_config() {
 	hostapd_common_add_device_config
 
 	config_add_string path phy 'macaddr:macaddr'
+	config_add_string hwmac
 	config_add_string tx_burst
 	config_add_string distance
 	config_add_string ifname_prefix
@@ -657,9 +658,11 @@ rename_board_phy_by_name() (
 )
 
 find_phy() {
+	local ieee80211="${IEEE80211_SYSFS:-/sys/class/ieee80211}"
+
 	[ -n "$phy" ] && {
 		rename_board_phy_by_name "$phy"
-		[ -d /sys/class/ieee80211/$phy ] && return 0
+		[ -d "$ieee80211/$phy" ] && return 0
 	}
 	[ -n "$path" ] && {
 		phy="$(iwinfo nl80211 phyname "path=$path")"
@@ -669,15 +672,49 @@ find_phy() {
 		}
 	}
 	[ -n "$macaddr" ] && {
-		for phy in $(ls /sys/class/ieee80211 2>/dev/null); do
-			grep -i -q "$macaddr" "/sys/class/ieee80211/${phy}/macaddress" && {
-				path="$(iwinfo nl80211 path "$phy")"
-				rename_board_phy_by_path "$path"
-				return 0
-			}
+		for phy in $(ls "$ieee80211" 2>/dev/null); do
+			grep -i -qx "$macaddr" "$ieee80211/${phy}/macaddress" 2>/dev/null || continue
+			path="$(iwinfo nl80211 path "$phy")"
+			rename_board_phy_by_path "$path"
+			return 0
+		done
+	}
+	[ -n "$hwmac" ] && {
+		for phy in $(ls "$ieee80211" 2>/dev/null); do
+			grep -i -qx "$hwmac" "$ieee80211/${phy}/addresses" 2>/dev/null || continue
+			path="$(iwinfo nl80211 path "$phy")"
+			rename_board_phy_by_path "$path"
+			return 0
 		done
 	}
 	return 1
+}
+
+# Map wifi-device.hwmac → current radio index via radio-mac.uc (single impl).
+mac80211_resolve_radio() {
+	local idx root script
+
+	[ -n "$hwmac" ] || return 0
+	[ -n "$phy" ] || return 0
+	case "$hwmac" in
+	*[!0-9A-Fa-f:]*) return 0 ;;
+	esac
+
+	root="${IEEE80211_SYSFS:-/sys/class/ieee80211}"
+	script="${RADIO_MAC_SCRIPT:-/usr/share/hostap/radio-mac.uc}"
+	[ -e "$root/$phy" ] || return 0
+	[ -f "$script" ] || return 0
+
+	idx="$(IEEE80211_SYSFS="$root" ucode - <<EOF
+import { radio_index_by_mac } from "${script}";
+let i = radio_index_by_mac("${phy}", "${hwmac}");
+if (i != null)
+	print(i);
+EOF
+)" || return 0
+
+	[ -n "$idx" ] || return 0
+	radio=$idx
 }
 
 mac80211_check_ap() {
@@ -1150,7 +1187,7 @@ mac80211_set_suffix() {
 drv_mac80211_setup() {
 	json_select config
 	json_get_vars \
-		radio phy macaddr path \
+		radio phy macaddr hwmac path \
 		country chanbw distance \
 		txpower \
 		rxantenna txantenna \
@@ -1160,8 +1197,6 @@ drv_mac80211_setup() {
 	json_get_values basic_rate_list basic_rate
 	json_get_values scan_list scan_list
 	json_select ..
-
-	mac80211_set_suffix
 
 	json_select data && {
 		json_get_var prev_rxantenna rxantenna
@@ -1174,6 +1209,9 @@ drv_mac80211_setup() {
 		wireless_set_retry 0
 		return 1
 	}
+
+	mac80211_resolve_radio
+	mac80211_set_suffix
 
 	set_default ifname_prefix "$phy$vif_phy_suffix-"
 

@@ -9,6 +9,7 @@ import * as hostapd from 'wifi.hostapd';
 import * as netifd from 'wifi.netifd';
 import * as iface from 'wifi.iface';
 import { find_phy } from 'wifi.utils';
+import { radio_index_by_mac } from '/usr/share/hostap/radio-mac.uc';
 import * as nl80211 from 'nl80211';
 import * as fs from 'fs';
 
@@ -171,6 +172,11 @@ function setup() {
 		netifd.set_retry(false);
 		return 1;
 	}
+
+	let resolved = radio_index_by_mac(data.phy, data.config.hwmac);
+	if (resolved != null)
+		data.config.radio = resolved;
+
 	data.phy_suffix = phy_suffix(data.config.radio, ":");
 	data.vif_phy_suffix = phy_suffix(data.config.radio, ".");
 	data.ifname_prefix = data.config.ifname_prefix;

@@ -510,6 +510,10 @@
 			"type": "alias",
 			"default": "bssid"
 		},
+		"hwmac": {
+			"type": "string",
+			"description": "Permanent per-radio MAC from phy addresses[] (multi-radio identity; not the AP BSSID)"
+		},
 		"macaddr_base": {
 			"type": "string",
 			"description": "Base MAC address used for deriving interface MAC addresses"

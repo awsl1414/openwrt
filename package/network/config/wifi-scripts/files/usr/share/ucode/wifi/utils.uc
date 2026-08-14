@@ -2,9 +2,13 @@
 
 import { readfile, realpath, lsdir } from "fs";
 import * as nl80211 from "nl80211";
+import { radio_index_by_mac } from "/usr/share/hostap/radio-mac.uc";
+
+/* Same seam as radio-mac.uc (host tests may override). */
+const ieee80211_root = getenv("IEEE80211_SYSFS") || "/sys/class/ieee80211";
 
 function phy_filename(phy, name) {
-	return `/sys/class/ieee80211/${phy}/${name}`;
+	return `${ieee80211_root}/${phy}/${name}`;
 }
 
 function phy_file(phy, name) {
@@ -55,7 +59,17 @@ function __find_phy_by_path(phys, paths) {
 
 function find_phy_by_macaddr(phys, macaddr) {
 	macaddr = lc(macaddr);
+	if (!macaddr)
+		return null;
+
 	return filter(phys, (phy) => phy_file(phy, "macaddress") == macaddr)[0];
+}
+
+function find_phy_by_hwmac(phys, hwmac) {
+	if (!hwmac)
+		return null;
+
+	return filter(phys, (phy) => radio_index_by_mac(phy, hwmac) != null)[0];
 }
 
 function rename_phy_by_name(phys, name, rename) {
@@ -126,9 +140,10 @@ function find_phy_by_name(phys, name, rename) {
 }
 
 export function find_phy(config, rename) {
-	let phys = lsdir("/sys/class/ieee80211");
+	let phys = lsdir(ieee80211_root);
 
 	return find_phy_by_path(phys, config.path) ??
 	       find_phy_by_macaddr(phys, config.macaddr) ??
+	       find_phy_by_hwmac(phys, config.hwmac) ??
 	       find_phy_by_name(phys, config.phy, rename);
 };
