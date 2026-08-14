@@ -1,20 +1,23 @@
 #!/bin/sh
-# One-shot: enable 2.4 GHz AP when an older overlay still has disabled=1.
-# Fresh images also seed this via board.d ucidef_set_wireless("2g").
+# One-shot overlay migration for askey,sbe1v1k:
+# - enable 2.4 GHz AP when older overlays still have disabled=1
+# - set country US when missing (hostapd/LuCI channel lists)
+# Fresh images also seed these via board.d (ucidef_set_wireless / ucidef_set_country).
 
 [ -f /etc/config/wireless ] || exit 0
 
 . /lib/functions.sh
-. /lib/functions/system.sh
 
 case "$(board_name)" in
 askey,sbe1v1k) ;;
 *) exit 0 ;;
 esac
 
+changed=0
+
 enable_2g_ap() {
 	local cfg="$1"
-	local device mode band
+	local device mode band disabled
 
 	config_get mode "$cfg" mode
 	[ "$mode" = "ap" ] || return 0
@@ -25,11 +28,25 @@ enable_2g_ap() {
 	config_get band "$device" band
 	[ "$band" = "2g" ] || return 0
 
+	config_get disabled "$cfg" disabled 0
+	[ "$disabled" = "0" ] && return 0
+
 	uci -q set "wireless.${cfg}.disabled=0"
+	changed=1
+}
+
+ensure_country() {
+	local cfg="$1"
+
+	uci -q get "wireless.${cfg}.country" >/dev/null && return 0
+	uci -q set "wireless.${cfg}.country=US"
+	changed=1
 }
 
 config_load wireless
 config_foreach enable_2g_ap wifi-iface
-uci commit wireless
+config_foreach ensure_country wifi-device
+
+[ "$changed" = "1" ] && uci commit wireless
 
 exit 0

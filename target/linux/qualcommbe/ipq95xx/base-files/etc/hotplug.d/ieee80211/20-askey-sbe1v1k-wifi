@@ -1,0 +1,58 @@
+#!/bin/sh
+# askey,sbe1v1k: ath12k WSI phy appears after netifd starts. Stock
+# 10-wifi-detect only does network.wireless retry (no-op if status is {}),
+# and 11-ath12k-trigger matches UCI path= while this board uses phy=wl0.
+# Run wifi up in the background so hotplug-call is not blocked on sleep/hostapd.
+
+[ "${ACTION}" = "add" ] || exit 0
+
+. /lib/functions.sh
+
+case "$(board_name)" in
+askey,sbe1v1k) ;;
+*) exit 0 ;;
+esac
+
+[ -n "$DEVICENAME" ] || exit 0
+[ -d "/sys/class/ieee80211/${DEVICENAME}" ] || exit 0
+[ -f /tmp/.askey-sbe1v1k-wifi-up ] && exit 0
+
+# Optional: only ath12k PCI phys (same gate as 11-ath12k-trigger).
+if [ -n "$DEVPATH" ] && [ -f "/sys/$DEVPATH/device/uevent" ]; then
+	grep -q 'DRIVER=ath12k_pci' "/sys/$DEVPATH/device/uevent" || exit 0
+fi
+
+# Claim before background work to avoid concurrent re-entry.
+touch /tmp/.askey-sbe1v1k-wifi-up
+
+(
+	n=0
+	while [ "$n" -lt 30 ]; do
+		ubus -S list network.wireless >/dev/null 2>&1 && break
+		sleep 1
+		n=$((n + 1))
+	done
+	if ! ubus -S list network.wireless >/dev/null 2>&1; then
+		rm -f /tmp/.askey-sbe1v1k-wifi-up
+		exit 0
+	fi
+
+	# 10-wifi-detect already ran wifi config; only re-config if netifd
+	# still has no wireless devices (empty status).
+	status="$(ubus -S call network.wireless status 2>/dev/null)"
+	case "$status" in
+	""|"{}")
+		/sbin/wifi config
+		;;
+	esac
+
+	try=0
+	while [ "$try" -lt 3 ]; do
+		/sbin/wifi up && exit 0
+		sleep 5
+		try=$((try + 1))
+	done
+	rm -f /tmp/.askey-sbe1v1k-wifi-up
+) &
+
+exit 0
