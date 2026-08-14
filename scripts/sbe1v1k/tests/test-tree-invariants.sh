@@ -192,9 +192,10 @@ require_grep "package/network/config/wifi-scripts/Makefile" \
 	'^PKG_RELEASE:=6$' \
 	"wifi-scripts PKG_RELEASE after dropping setup band repair"
 require_file "package/network/utils/iwinfo/patches/101-uci-hwmac-freqlist-radio.patch"
+require_file "package/network/utils/iwinfo/patches/102-uci-hwmac-phy2ifname-radio.patch"
 require_grep "package/network/utils/iwinfo/Makefile" \
-	'^PKG_RELEASE:=2$' \
-	"libiwinfo PKG_RELEASE bumped for hwmac freqlist"
+	'^PKG_RELEASE:=3$' \
+	"libiwinfo PKG_RELEASE bumped for hwmac phy2ifname"
 require_grep "package/network/utils/iwinfo/patches/101-uci-hwmac-freqlist-radio.patch" \
 	'nl80211_phy_idx_from_hwmac' \
 	"iwinfo resolves wifi-device via hwmac"
@@ -210,6 +211,12 @@ require_grep "package/network/utils/iwinfo/patches/101-uci-hwmac-freqlist-radio.
 require_grep "package/network/utils/iwinfo/patches/101-uci-hwmac-freqlist-radio.patch" \
 	'nl80211_freqlist_want_radio' \
 	"iwinfo selects radio filter for UCI/netdev"
+require_grep "package/network/utils/iwinfo/patches/102-uci-hwmac-phy2ifname-radio.patch" \
+	'nl80211_uci_want_mac' \
+	"iwinfo maps UCI section to radio netdev via hwmac"
+require_grep "package/network/utils/iwinfo/patches/102-uci-hwmac-phy2ifname-radio.patch" \
+	'nl80211_phy_idx_from_uci_ex' \
+	"phy2ifname resolves radio index from UCI"
 require_grep "package/network/config/wifi-scripts/files/lib/wifi/mac80211.uc" \
 	'Incomplete sections \(missing band\)' \
 	"mac80211.uc repairs missing wifi-device.band on wifi config"
