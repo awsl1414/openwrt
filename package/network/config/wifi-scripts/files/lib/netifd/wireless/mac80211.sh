@@ -717,6 +717,59 @@ EOF
 	radio=$idx
 }
 
+# Serialize hostapd on multi-radio phys via phy-setup-lock.uc (same as ucode backend).
+mac80211_phy_setup_lock_acquire() {
+	local phy="$1"
+	local script
+
+	PHY_SETUP_LOCK_PATH=
+	[ -n "$phy" ] || return 1
+	case "$phy" in
+	*[!A-Za-z0-9_.-]*) return 1 ;;
+	esac
+
+	script="${PHY_SETUP_LOCK_SCRIPT:-/usr/share/hostap/phy-setup-lock.uc}"
+	[ -f "$script" ] || return 1
+
+	PHY_SETUP_LOCK_PATH="$(ucode - <<EOF
+import { acquire_hostapd_phy_lock } from "${script}";
+let p = acquire_hostapd_phy_lock("${phy}");
+if (p)
+	print(p);
+EOF
+)" || return 1
+
+	[ -n "$PHY_SETUP_LOCK_PATH" ] || return 1
+	return 0
+}
+
+# settle=1 → default WIFI_PHY_SETUP_SETTLE; settle=0 → unlock immediately (failure path).
+mac80211_phy_setup_lock_release() {
+	local settle="${1:-1}"
+	local script path="$PHY_SETUP_LOCK_PATH"
+
+	PHY_SETUP_LOCK_PATH=
+	[ -n "$path" ] || return 0
+
+	script="${PHY_SETUP_LOCK_SCRIPT:-/usr/share/hostap/phy-setup-lock.uc}"
+	[ -f "$script" ] || {
+		rmdir "$path" 2>/dev/null || true
+		return 0
+	}
+
+	if [ "$settle" = "0" ]; then
+		ucode - <<EOF
+import { release_phy_setup_lock } from "${script}";
+release_phy_setup_lock("${path}", 0);
+EOF
+	else
+		ucode - <<EOF
+import { release_phy_setup_lock } from "${script}";
+release_phy_setup_lock("${path}");
+EOF
+	fi
+}
+
 mac80211_check_ap() {
 	has_ap=1
 }
@@ -1043,20 +1096,26 @@ wpa_supplicant_set_config() {
 hostapd_set_config() {
 	local phy="$1"
 	local radio="$2"
+	local locked=
 
 	[ -n "$hostapd_ctrl" ] || {
 		ubus_call hostapd config_set '{ "phy": "'"$phy"'", "radio": '"$radio"', "config": "", "prev_config": "'"${hostapd_conf_file}.prev"'" }' > /dev/null
 		return 0;
 	}
 
+	mac80211_phy_setup_lock_acquire "$phy" && locked=1
+
 	ubus wait_for hostapd
 	local hostapd_res="$(ubus_call hostapd config_set "{ \"phy\": \"$phy\", \"radio\": $radio, \"config\":\"${hostapd_conf_file}\", \"prev_config\": \"${hostapd_conf_file}.prev\"}")"
 	ret="$?"
 	[ "$ret" != 0 -o -z "$hostapd_res" ] && {
+		[ -n "$locked" ] && mac80211_phy_setup_lock_release 0
 		wireless_setup_failed HOSTAPD_START_FAILED
 		return
 	}
 	wireless_add_process "$(jsonfilter -s "$hostapd_res" -l 1 -e @.pid)" "/usr/sbin/hostapd" 1 1
+
+	[ -n "$locked" ] && mac80211_phy_setup_lock_release 1
 }
 
 

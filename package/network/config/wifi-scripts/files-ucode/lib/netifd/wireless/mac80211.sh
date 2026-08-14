@@ -10,7 +10,9 @@ import * as netifd from 'wifi.netifd';
 import * as iface from 'wifi.iface';
 import { find_phy } from 'wifi.utils';
 import { radio_index_by_mac } from '/usr/share/hostap/radio-mac.uc';
-import * as nl80211 from 'nl80211';
+import {
+	needs_phy_setup_lock, try_acquire_phy_setup_lock, release_phy_setup_lock
+} from '/usr/share/hostap/phy-setup-lock.uc';
 import * as fs from 'fs';
 
 global.radio = ARGV[2];
@@ -30,6 +32,18 @@ function phy_suffix(radio, sep) {
 	if (radio == null || radio < 0)
 		return "";
 	return sep + radio;
+}
+
+function take_hostapd_phy_lock(phy_name) {
+	if (!needs_phy_setup_lock(phy_name))
+		return null;
+
+	let path = try_acquire_phy_setup_lock(phy_name);
+	if (path)
+		log(`Acquired multi-radio setup lock for ${phy_name}`);
+	else
+		log(`Unable to serialize multi-radio setup for ${phy_name}`);
+	return path;
 }
 
 function reset_config(phy, radio) {
@@ -313,8 +327,12 @@ function setup() {
 	if (fs.access('/usr/sbin/wpa_supplicant', 'x'))
 		supplicant.setup(supplicant_data, data);
 
-	if (fs.access('/usr/sbin/hostapd', 'x'))
+	let phy_setup_lock;
+	if (fs.access('/usr/sbin/hostapd', 'x')) {
+		phy_setup_lock = take_hostapd_phy_lock(data.phy);
 		hostapd.setup(data);
+		release_phy_setup_lock(phy_setup_lock);
+	}
 
 	if (length(supplicant_data) > 0)
 		supplicant.start(data);
