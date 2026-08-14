@@ -50,6 +50,7 @@ require_file "scripts/sbe1v1k/build-arch.sh"
 require_file "target/linux/qualcommbe/ipq95xx/base-files/etc/uci-defaults/zz-askey-sbe1v1k-luci-zh"
 require_file "package/kernel/mac80211/patches/ath12k/400-wifi-ath12k-set-per-radio-MAC-address-from-DT.patch"
 require_file "package/network/config/wifi-scripts/files/usr/share/hostap/radio-mac.uc"
+require_file "package/network/config/wifi-scripts/files/usr/share/hostap/phy-setup-lock.uc"
 require_file "target/linux/qualcommbe/patches-6.18/0362-net-ethernet-qualcomm-ppe-fix-rx-dma-mapping-direction.patch"
 require_file "target/linux/qualcommbe/patches-6.18/0410-net-ethernet-qualcomm-ppe-fix-freed-skb-reuse-in-rx-reaping.patch"
 
@@ -162,8 +163,8 @@ require_grep "package/kernel/mac80211/Makefile" \
 	'^PKG_RELEASE:=' \
 	"mac80211 PKG_RELEASE present"
 require_grep "package/network/config/wifi-scripts/Makefile" \
-	'^PKG_RELEASE:=2$' \
-	"wifi-scripts PKG_RELEASE bumped for radio-mac"
+	'^PKG_RELEASE:=3$' \
+	"wifi-scripts PKG_RELEASE bumped for phy-setup-lock"
 require_grep "package/network/config/wifi-scripts/files/usr/share/hostap/wifi-detect.uc" \
 	'entry\.hwmac' \
 	"wifi-detect records per-radio hwmac"
@@ -182,6 +183,21 @@ require_grep "package/network/config/wifi-scripts/files-ucode/lib/netifd/wireles
 require_grep "package/network/config/wifi-scripts/files-ucode/usr/share/schema/wireless.wifi-device.json" \
 	'"hwmac"' \
 	"schema documents hwmac"
+require_grep "package/network/config/wifi-scripts/files/usr/share/hostap/phy-setup-lock.uc" \
+	'needs_phy_setup_lock' \
+	"phy-setup-lock.uc exports needs_phy_setup_lock"
+require_grep "package/network/config/wifi-scripts/files/usr/share/hostap/phy-setup-lock.uc" \
+	'acquire_hostapd_phy_lock' \
+	"phy-setup-lock.uc exports acquire_hostapd_phy_lock"
+require_grep "package/network/config/wifi-scripts/files-ucode/lib/netifd/wireless/mac80211.sh" \
+	'phy-setup-lock' \
+	"ucode mac80211 serializes hostapd via phy-setup-lock"
+require_grep "package/network/config/wifi-scripts/files/lib/netifd/wireless/mac80211.sh" \
+	'acquire_hostapd_phy_lock' \
+	"shell acquire uses acquire_hostapd_phy_lock"
+require_grep "package/network/config/wifi-scripts/files/lib/netifd/wireless/mac80211.sh" \
+	'PHY_SETUP_LOCK_SCRIPT' \
+	"shell hostapd setup uses PHY_SETUP_LOCK_SCRIPT"
 
 if command -v bash >/dev/null 2>&1; then
 	if bash -n "$repo_root/scripts/sbe1v1k/build-arch.sh"; then

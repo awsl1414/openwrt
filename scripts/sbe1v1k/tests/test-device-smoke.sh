@@ -125,6 +125,12 @@ else
 	bad "radio-mac.uc missing on device"
 fi
 
+if remote 'test -f /usr/share/hostap/phy-setup-lock.uc'; then
+	ok "phy-setup-lock.uc installed"
+else
+	bad "phy-setup-lock.uc missing on device"
+fi
+
 mac_map=$(remote '
 set -e
 # Prefer renamed board phy; fall back to phy0.
