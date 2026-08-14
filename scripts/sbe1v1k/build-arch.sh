@@ -422,11 +422,12 @@ apply_seed_config() {
 			die "luci-ssl missing after defconfig; run feeds install (drop --skip-feeds)"
 	fi
 
+	# Use if/elif (not `((x)) && fn`): as the last command in a function,
+	# a false ((x)) makes the function return 1 and aborts under set -e.
 	if ((THEMES)); then
 		apply_community_themes_config
-	else
-		# Cold seed has no themes; only police leftovers when reusing .config.
-		((KEEP_CONFIG)) && assert_no_community_themes_in_config
+	elif ((KEEP_CONFIG)); then
+		assert_no_community_themes_in_config
 	fi
 }
 

@@ -105,6 +105,13 @@ require_grep "scripts/sbe1v1k/build-arch.sh" \
 require_grep "scripts/sbe1v1k/build-arch.sh" \
 	'assert_no_community_themes_in_config' \
 	"build-arch refuses leftover themes without --themes"
+# Guard against set -e abort: false ((KEEP_CONFIG)) && … as last stmt in a function.
+if grep -nE '^\s*\(\(KEEP_CONFIG\)\)\s*&&' "$repo_root/scripts/sbe1v1k/build-arch.sh" \
+	| grep -q .; then
+	bad "build-arch must not use ((KEEP_CONFIG)) && as a bare statement"
+else
+	ok "build-arch avoids ((KEEP_CONFIG)) && under set -e"
+fi
 # --skip-themes must not exist (opt-in only via --themes)
 if grep -qE -e '--skip-themes' "$repo_root/scripts/sbe1v1k/build-arch.sh"; then
 	bad "build-arch must not keep --skip-themes"
