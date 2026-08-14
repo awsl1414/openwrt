@@ -70,6 +70,19 @@ else
 	bad "shell failure path skips settle"
 fi
 
+hostapd_uc="$repo_root/package/network/config/wifi-scripts/files-ucode/usr/share/ucode/wifi/hostapd.uc"
+if grep -n 'hostapd.setup' -A5 "$mac80211_ucode" | grep -q 'release_phy_setup_lock(phy_setup_lock, ok ? null : 0)'; then
+	ok "ucode failure path skips settle"
+else
+	bad "ucode failure path skips settle"
+fi
+if grep -n 'config_set' -A12 "$hostapd_uc" | grep -q 'return true' && \
+   grep -n 'HOSTAPD_START_FAILED' -A2 "$hostapd_uc" | grep -q 'return false'; then
+	ok "hostapd.setup returns success bool"
+else
+	bad "hostapd.setup returns success bool"
+fi
+
 if grep -n 'wifi-.*setup-lock' "$mac80211_ucode" "$mac80211_sh" | grep -v phy-setup-lock | grep -q mkdir; then
 	bad "inline mkdir setup-lock still present"
 else
