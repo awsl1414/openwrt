@@ -10,6 +10,7 @@ import * as iface from 'wifi.iface';
 import * as nl80211 from 'nl80211';
 import * as ap from 'wifi.ap';
 import * as fs from 'fs';
+import * as libubus from 'ubus';
 
 const NL80211_EXT_FEATURE_ENABLE_FTM_RESPONDER = 33;
 const NL80211_EXT_FEATURE_RADAR_BACKGROUND = 61;
@@ -611,7 +612,9 @@ export function setup(data) {
 	};
 	if (!global.ubus.list('hostapd'))
 		system('ubus wait_for hostapd');
-	let ret = global.ubus.call('hostapd', 'config_set', msg);
+	/* Long timeout only for config_set: phy-setup-queue may wait across ACS/CAC. */
+	let hostapd_ubus = libubus.connect(null, 300);
+	let ret = hostapd_ubus.call('hostapd', 'config_set', msg);
 
 	if (ret) {
 		netifd.add_process('/usr/sbin/hostapd', ret.pid, true, true);

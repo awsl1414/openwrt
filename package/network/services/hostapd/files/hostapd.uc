@@ -2,6 +2,11 @@ let libubus = require("ubus");
 import * as uloop from "uloop";
 import { open, readfile, access } from "fs";
 import { wdev_remove, is_equal, vlist_new, phy_is_fullmac, phy_open, wdev_set_radio_mask, wdev_set_up } from "common";
+import {
+	needs_phy_setup_queue, is_phy_setup_steady, should_phy_setup_settle,
+	normalize_radio, enqueue_phy_setup_sorted,
+	phy_setup_poll_ms, phy_setup_settle_ms, phy_setup_warn_every_ms
+} from "phy-setup-queue";
 
 let ubus = libubus.connect(null, 60);
 
@@ -17,6 +22,8 @@ libubus.guard(ex_handler);
 hostapd.data.config = {};
 hostapd.data.pending_config = {};
 hostapd.data.apsta_freq = {};
+/* base phy → { busy, queue, timer, active_name, remaining_ms } */
+hostapd.data.phy_setup = {};
 
 hostapd.data.file_fields = {
 	vlan_file: true,
@@ -252,6 +259,7 @@ function __iface_pending_next(pending, state, ret, data)
 	case "done":
 	default:
 		delete hostapd.data.pending_config[phy];
+		phy_setup_pending_done(phy);
 		break;
 	}
 }
@@ -1012,6 +1020,233 @@ function iface_config_remove(name, old_config)
 	return iface_remove(old_config);
 }
 
+function phy_setup_slot(base)
+{
+	hostapd.data.phy_setup[base] ??= {
+		busy: false,
+		queue: [],
+		timer: null,
+		active_name: null,
+		since_warn_ms: 0,
+		settling: false,
+	};
+	return hostapd.data.phy_setup[base];
+}
+
+function phy_setup_cancel_timer(slot)
+{
+	if (slot.timer) {
+		slot.timer.cancel();
+		delete slot.timer;
+	}
+}
+
+function phy_setup_iface_state(name)
+{
+	let iface = hostapd.interfaces[name];
+	if (!iface)
+		return null;
+	try {
+		return iface.state();
+	} catch (e) {
+		return null;
+	}
+}
+
+function phy_setup_job_steady(name)
+{
+	return is_phy_setup_steady(
+		!!hostapd.data.pending_config[name],
+		phy_setup_iface_state(name)
+	);
+}
+
+function phy_setup_reply(job)
+{
+	let req = job.ubus_req;
+	if (!req)
+		return;
+	delete job.ubus_req;
+	try {
+		req.reply({ pid: hostapd.getpid() });
+	} catch (e) {
+		hostapd.printf(`phy-setup: ubus reply failed for ${job.name}: ${e}`);
+	}
+}
+
+function phy_setup_finish_job(base, reason)
+{
+	let slot = hostapd.data.phy_setup[base];
+	if (!slot)
+		return;
+
+	phy_setup_cancel_timer(slot);
+	if (slot.active_name)
+		hostapd.printf(`phy-setup: ${reason} for ${slot.active_name} on ${base}`);
+	slot.busy = false;
+	slot.settling = false;
+	slot.active_name = null;
+	slot.since_warn_ms = 0;
+	phy_setup_kick(base);
+}
+
+function phy_setup_arm_settle(base)
+{
+	let slot = phy_setup_slot(base);
+	let settle = phy_setup_settle_ms();
+	slot.settling = true;
+	phy_setup_cancel_timer(slot);
+	if (settle <= 0) {
+		phy_setup_finish_job(base, "steady");
+		return;
+	}
+	slot.timer = uloop.timer(settle, () => phy_setup_finish_job(base, "steady"));
+}
+
+function phy_setup_poll_tick(base)
+{
+	let slot = hostapd.data.phy_setup[base];
+	if (!slot || !slot.busy || !slot.active_name || slot.settling)
+		return;
+
+	if (phy_setup_job_steady(slot.active_name)) {
+		if (should_phy_setup_settle(phy_setup_iface_state(slot.active_name))) {
+			phy_setup_arm_settle(base);
+			return;
+		}
+		phy_setup_finish_job(base, "steady");
+		return;
+	}
+
+	slot.since_warn_ms += phy_setup_poll_ms();
+	if (slot.since_warn_ms >= phy_setup_warn_every_ms()) {
+		hostapd.printf(`phy-setup: still waiting on ${slot.active_name} (state=${phy_setup_iface_state(slot.active_name)})`);
+		slot.since_warn_ms = 0;
+	}
+
+	phy_setup_cancel_timer(slot);
+	slot.timer = uloop.timer(phy_setup_poll_ms(), () => phy_setup_poll_tick(base));
+}
+
+function phy_setup_start_wait(base, name)
+{
+	let slot = phy_setup_slot(base);
+	slot.active_name = name;
+	slot.settling = false;
+	slot.since_warn_ms = 0;
+
+	if (phy_setup_job_steady(name)) {
+		if (should_phy_setup_settle(phy_setup_iface_state(name))) {
+			phy_setup_arm_settle(base);
+			return;
+		}
+		phy_setup_finish_job(base, "immediate");
+		return;
+	}
+
+	hostapd.printf(`phy-setup: waiting for steady state on ${name}`);
+	phy_setup_cancel_timer(slot);
+	slot.timer = uloop.timer(phy_setup_poll_ms(), () => phy_setup_poll_tick(base));
+}
+
+function phy_setup_pending_done(name)
+{
+	for (let base, slot in hostapd.data.phy_setup) {
+		if (slot.active_name != name || !slot.busy || slot.settling)
+			continue;
+		phy_setup_cancel_timer(slot);
+		slot.timer = uloop.timer(0, () => phy_setup_poll_tick(base));
+		return;
+	}
+}
+
+function phy_setup_abort_active(base, name)
+{
+	let slot = phy_setup_slot(base);
+	if (!slot.busy || slot.active_name != name)
+		return false;
+
+	hostapd.printf(`phy-setup: supersede active ${name} on ${base}`);
+	let pending = hostapd.data.pending_config[name];
+	if (pending)
+		pending.abort();
+
+	csa_timer_cancel(name);
+	hostapd.remove_iface(name);
+	let cfg = hostapd.data.config[name];
+	if (cfg)
+		iface_remove(cfg);
+
+	phy_setup_cancel_timer(slot);
+	slot.busy = false;
+	slot.settling = false;
+	slot.active_name = null;
+	slot.since_warn_ms = 0;
+	return true;
+}
+
+function phy_setup_kick(base)
+{
+	let slot = phy_setup_slot(base);
+	if (slot.busy || !length(slot.queue))
+		return;
+
+	let job = shift(slot.queue);
+	slot.busy = true;
+	slot.settling = false;
+	slot.active_name = job.name;
+	hostapd.printf(`phy-setup: apply ${job.name} on ${base} (queue left ${length(slot.queue)})`);
+
+	try {
+		job.apply();
+	} catch (e) {
+		hostapd.printf(`phy-setup: apply failed for ${job.name}: ${e}`);
+		phy_setup_reply(job);
+		phy_setup_finish_job(base, "apply-error");
+		return;
+	}
+
+	phy_setup_reply(job);
+	phy_setup_start_wait(base, job.name);
+}
+
+/**
+ * Serialize config_set applies on multi-radio phys.
+ * Optional ubus_req is replied after apply(); caller must req.defer() first.
+ */
+function phy_setup_run(phy, radio, name, apply, ubus_req)
+{
+	radio = normalize_radio(radio);
+
+	if (!needs_phy_setup_queue(radio)) {
+		try {
+			apply();
+		} catch (e) {
+			hostapd.printf(`phy-setup: apply failed for ${name}: ${e}`);
+		}
+		if (ubus_req) {
+			try {
+				ubus_req.reply({ pid: hostapd.getpid() });
+			} catch (e) {
+				hostapd.printf(`phy-setup: ubus reply failed for ${name}: ${e}`);
+			}
+		}
+		return;
+	}
+
+	let slot = phy_setup_slot(phy);
+
+	for (let j in slot.queue)
+		if (j.name == name)
+			phy_setup_reply(j);
+
+	phy_setup_abort_active(phy, name);
+
+	let job = { name, radio, apply, ubus_req };
+	slot.queue = enqueue_phy_setup_sorted(slot.queue, job);
+	phy_setup_kick(phy);
+}
+
 function iface_set_config(name, config)
 {
 	let old_config = hostapd.data.config[name];
@@ -1424,11 +1659,13 @@ let main_obj = {
 			radio: 0,
 		},
 		call: function(req) {
-			let phy_list = req.args.phy ? [ phy_name(req.args.phy, req.args.radio) ] : keys(hostapd.data.config);
-			for (let phy_name in phy_list) {
-				let phy = hostapd.data.config[phy_name];
-				let config = iface_load_config(phy.phy, phy.radio_idx, phy.orig_file);
-				iface_set_config(phy_name, config);
+			let phy_list = req.args.phy ? [ phy_name(req.args.phy, normalize_radio(req.args.radio)) ] : keys(hostapd.data.config);
+			for (let iface_name in phy_list) {
+				let cfg = hostapd.data.config[iface_name];
+				if (!cfg)
+					continue;
+				let config = iface_load_config(cfg.phy, cfg.radio_idx, cfg.orig_file);
+				iface_set_config(iface_name, config);
 			}
 
 			return 0;
@@ -1446,7 +1683,8 @@ let main_obj = {
 			no_link: true,
 		},
 		call: function(req) {
-			let phy = phy_name(req.args.phy, req.args.radio);
+			let radio = normalize_radio(req.args.radio);
+			let phy = phy_name(req.args.phy, radio);
 			if (req.args.up == null || !phy)
 				return libubus.STATUS_INVALID_ARGUMENT;
 
@@ -1576,6 +1814,7 @@ let main_obj = {
 		args: {
 		},
 		call: function(req) {
+			/* Sync teardown — do not interleave with the phy-setup queue. */
 			for (let name in hostapd.data.config)
 				iface_set_config(name);
 			mld_set_config({});
@@ -1591,7 +1830,7 @@ let main_obj = {
 		},
 		call: function(req) {
 			let phy = req.args.phy;
-			let radio = req.args.radio;
+			let radio = normalize_radio(req.args.radio);
 			let name = phy_name(phy, radio);
 			let file = req.args.config;
 			let prev_file = req.args.prev_config;
@@ -1599,24 +1838,27 @@ let main_obj = {
 			if (!phy)
 				return libubus.STATUS_INVALID_ARGUMENT;
 
-			if (prev_file && !hostapd.data.config[name]) {
-				let config = iface_load_config(phy, radio, prev_file);
-				if (config)
-					config.radio.data = [];
-				hostapd.data.config[name] = config;
-			}
+			/*
+			 * Defer ubus reply until this radio's apply() has run (not until
+			 * AP-ENABLED). Queued radios must not return success early.
+			 */
+			req.defer();
+			phy_setup_run(phy, radio, name, () => {
+				if (prev_file && !hostapd.data.config[name]) {
+					let config = iface_load_config(phy, radio, prev_file);
+					if (config)
+						config.radio.data = [];
+					hostapd.data.config[name] = config;
+				}
 
-			let config = iface_load_config(phy, radio, file);
+				let config = iface_load_config(phy, radio, file);
 
-			hostapd.printf(`Set new config for phy ${name}: ${file}`);
-			iface_set_config(name, config);
+				hostapd.printf(`Set new config for phy ${name}: ${file}`);
+				iface_set_config(name, config);
 
-			if (hostapd.data.auth_obj)
-				hostapd.data.auth_obj.notify("reload", { phy, radio });
-
-			return {
-				pid: hostapd.getpid()
-			};
+				if (hostapd.data.auth_obj)
+					hostapd.data.auth_obj.notify("reload", { phy, radio });
+			}, req);
 		}
 	},
 	config_add: {

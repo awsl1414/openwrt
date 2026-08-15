@@ -10,10 +10,8 @@ import * as netifd from 'wifi.netifd';
 import * as iface from 'wifi.iface';
 import { find_phy } from 'wifi.utils';
 import { radio_index_by_mac } from '/usr/share/hostap/radio-mac.uc';
-import {
-	needs_phy_setup_lock, acquire_hostapd_phy_lock, release_phy_setup_lock
-} from '/usr/share/hostap/phy-setup-lock.uc';
 import * as fs from 'fs';
+import * as libubus from 'ubus';
 
 global.radio = ARGV[2];
 
@@ -34,20 +32,16 @@ function phy_suffix(radio, sep) {
 	return sep + radio;
 }
 
-function take_hostapd_phy_lock(phy_name) {
-	let path = acquire_hostapd_phy_lock(phy_name);
-	if (path)
-		log(`Acquired multi-radio setup lock for ${phy_name}`);
-	else if (needs_phy_setup_lock(phy_name))
-		log(`Unable to serialize multi-radio setup for ${phy_name}`);
-	return path;
+function hostapd_config_set(msg) {
+	let u = libubus.connect(null, 300);
+	return u.call('hostapd', 'config_set', msg);
 }
 
 function reset_config(phy, radio) {
 	let name = phy + phy_suffix(radio, ".");
 	let prev_config = `/var/run/hostapd-${name}.conf`;
 
-	global.ubus.call('hostapd', 'config_set', { phy, radio, config: '', prev_config });
+	hostapd_config_set({ phy, radio, config: '', prev_config });
 	global.ubus.call('wpa_supplicant', 'config_set', { phy, radio, config: []});
 
 	name = phy + phy_suffix(radio, ":");
@@ -324,13 +318,8 @@ function setup() {
 	if (fs.access('/usr/sbin/wpa_supplicant', 'x'))
 		supplicant.setup(supplicant_data, data);
 
-	let phy_setup_lock;
-	if (fs.access('/usr/sbin/hostapd', 'x')) {
-		phy_setup_lock = take_hostapd_phy_lock(data.phy);
-		let ok = hostapd.setup(data);
-		/* Match shell: settle only after successful config_set. */
-		release_phy_setup_lock(phy_setup_lock, ok ? null : 0);
-	}
+	if (fs.access('/usr/sbin/hostapd', 'x'))
+		hostapd.setup(data);
 
 	if (length(supplicant_data) > 0)
 		supplicant.start(data);

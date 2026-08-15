@@ -60,7 +60,8 @@ require_grep "target/linux/qualcommbe/ipq95xx/base-files/etc/uci-defaults/98-ask
 	"uci-defaults restarts logd after raising log_size"
 require_file "package/kernel/mac80211/patches/ath12k/400-wifi-ath12k-set-per-radio-MAC-address-from-DT.patch"
 require_file "package/network/config/wifi-scripts/files/usr/share/hostap/radio-mac.uc"
-require_file "package/network/config/wifi-scripts/files/usr/share/hostap/phy-setup-lock.uc"
+require_file "package/network/services/hostapd/files/phy-setup-queue.uc"
+require_file "package/network/services/hostapd/files/hostapd.uc"
 require_file "target/linux/qualcommbe/patches-6.18/0362-net-ethernet-qualcomm-ppe-fix-rx-dma-mapping-direction.patch"
 require_file "target/linux/qualcommbe/patches-6.18/0410-net-ethernet-qualcomm-ppe-fix-freed-skb-reuse-in-rx-reaping.patch"
 
@@ -220,8 +221,8 @@ require_grep "package/kernel/mac80211/Makefile" \
 	'^PKG_RELEASE:=' \
 	"mac80211 PKG_RELEASE present"
 require_grep "package/network/config/wifi-scripts/Makefile" \
-	'^PKG_RELEASE:=6$' \
-	"wifi-scripts PKG_RELEASE after dropping setup band repair"
+	'^PKG_RELEASE:=7$' \
+	"wifi-scripts PKG_RELEASE after hostapd phy-setup-queue"
 require_file "package/network/utils/iwinfo/patches/101-uci-hwmac-freqlist-radio.patch"
 require_grep "package/network/utils/iwinfo/Makefile" \
 	'^PKG_RELEASE:=4$' \
@@ -301,21 +302,38 @@ require_grep "package/network/config/wifi-scripts/files-ucode/lib/netifd/wireles
 require_grep "package/network/config/wifi-scripts/files-ucode/usr/share/schema/wireless.wifi-device.json" \
 	'"hwmac"' \
 	"schema documents hwmac"
-require_grep "package/network/config/wifi-scripts/files/usr/share/hostap/phy-setup-lock.uc" \
-	'needs_phy_setup_lock' \
-	"phy-setup-lock.uc exports needs_phy_setup_lock"
-require_grep "package/network/config/wifi-scripts/files/usr/share/hostap/phy-setup-lock.uc" \
-	'acquire_hostapd_phy_lock' \
-	"phy-setup-lock.uc exports acquire_hostapd_phy_lock"
-require_grep "package/network/config/wifi-scripts/files-ucode/lib/netifd/wireless/mac80211.sh" \
-	'phy-setup-lock' \
-	"ucode mac80211 serializes hostapd via phy-setup-lock"
+require_grep "package/network/services/hostapd/files/phy-setup-queue.uc" \
+	'needs_phy_setup_queue' \
+	"phy-setup-queue.uc exports needs_phy_setup_queue"
+require_grep "package/network/services/hostapd/files/phy-setup-queue.uc" \
+	'normalize_radio' \
+	"phy-setup-queue.uc exports normalize_radio"
+require_grep "package/network/services/hostapd/files/hostapd.uc" \
+	'phy_setup_run' \
+	"hostapd.uc serializes via phy_setup_run"
+require_grep "package/network/services/hostapd/files/hostapd.uc" \
+	'req.defer()' \
+	"hostapd config_set defers ubus until apply"
 require_grep "package/network/config/wifi-scripts/files/lib/netifd/wireless/mac80211.sh" \
-	'acquire_hostapd_phy_lock' \
-	"shell acquire uses acquire_hostapd_phy_lock"
-require_grep "package/network/config/wifi-scripts/files/lib/netifd/wireless/mac80211.sh" \
-	'PHY_SETUP_LOCK_SCRIPT' \
-	"shell hostapd setup uses PHY_SETUP_LOCK_SCRIPT"
+	'ubus_call_hostapd_config_set' \
+	"shell long timeout only for hostapd config_set"
+require_grep "package/network/config/wifi-scripts/files-ucode/usr/share/ucode/wifi/hostapd.uc" \
+	'connect\(null, 300\)' \
+	"ucode long timeout only for hostapd config_set"
+require_grep "package/network/services/hostapd/files/phy-setup-queue.uc" \
+	'should_phy_setup_settle' \
+	"phy-setup-queue.uc exports should_phy_setup_settle"
+require_grep "package/network/services/hostapd/Makefile" \
+	'phy-setup-queue.uc' \
+	"hostapd package installs phy-setup-queue.uc"
+if grep -q 'phy-setup-lock\|acquire_hostapd_phy_lock\|PHY_SETUP_LOCK' \
+	"$repo_root/package/network/config/wifi-scripts/files-ucode/lib/netifd/wireless/mac80211.sh" \
+	"$repo_root/package/network/config/wifi-scripts/files/lib/netifd/wireless/mac80211.sh"
+then
+	bad "wifi-scripts no longer mkdir-lock hostapd setup"
+else
+	ok "wifi-scripts defer serialization to hostapd"
+fi
 
 if command -v bash >/dev/null 2>&1; then
 	if bash -n "$repo_root/scripts/sbe1v1k/build-arch.sh"; then

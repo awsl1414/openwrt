@@ -15,7 +15,7 @@ usage() {
 	cat <<EOF
 Usage: bash $0 [--device] [sysupgrade.bin]
 
-  (default)   tree invariants + radio-mac + phy-setup-lock + upgrade-validation
+  (default)   tree invariants + radio-mac + phy-setup-queue + upgrade-validation
   --device    also run on-device smoke (SBE_HOST / root@192.168.255.1)
   IMAGE       optional real sysupgrade.bin passed to upgrade-validation
 EOF
@@ -53,8 +53,7 @@ run_one() {
 
 run_one tree-invariants sh "$TESTS_DIR/test-tree-invariants.sh"
 run_one radio-mac sh "$TESTS_DIR/test-radio-mac.sh"
-run_one phy-setup-lock sh "$TESTS_DIR/test-phy-setup-lock.sh"
-
+run_one phy-setup-queue sh "$TESTS_DIR/test-phy-setup-queue.sh"
 if [[ -n "$IMAGE" ]]; then
 	run_one upgrade-validation sh "$TESTS_DIR/test-upgrade-validation.sh" "$IMAGE"
 else

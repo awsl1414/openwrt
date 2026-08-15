@@ -5,7 +5,7 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=hostapd
-PKG_RELEASE:=1
+PKG_RELEASE:=2
 
 PKG_SOURCE_URL:=https://w1.fi/hostap.git
 PKG_SOURCE_PROTO:=git
@@ -719,6 +719,7 @@ endif
 define Install/hostapd
 	$(INSTALL_DIR) $(1)/usr/sbin $(1)/usr/share/hostap
 	$(INSTALL_DATA) ./files/hostapd.uc $(1)/usr/share/hostap/
+	$(INSTALL_DATA) ./files/phy-setup-queue.uc $(1)/usr/share/hostap/
 	$(if $(findstring full,$(CONFIG_VARIANT)),$(Install/hostapd/full))
 endef
 

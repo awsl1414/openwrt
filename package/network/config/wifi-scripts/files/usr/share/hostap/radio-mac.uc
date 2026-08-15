@@ -7,7 +7,7 @@
  *     upstream draft).  Frequency class is capability + hostapd input,
  *     not identity.
  *   - resolve radio index from band, frequency ranges, or device path
- *   - serialize hostapd (see phy-setup-lock.uc)
+ *   - serialize hostapd config_set (see hostapd phy-setup-queue.uc)
  *   - restore wiped wifi-device.band (libiwinfo must resolve UCI section
  *     names via hwmac + WIPHY_RADIO freqlist; see iwinfo 101 patch)
  *

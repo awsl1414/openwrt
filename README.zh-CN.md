@@ -26,7 +26,7 @@ chainloader 等恢复手段的高级用户。
 本树相对上游设备 PR 额外包含（节选）：
 
 - ath12k phy 晚到后的 `20-askey-sbe1v1k-wifi` hotplug
-- 多 radio：`hwmac` 身份 + hostapd 同 phy 串行（`phy-setup-lock`）
+- 多 radio：`hwmac` 身份 + hostapd 同 phy 串行（`phy-setup-queue`，等到 AP 稳态；需与 wifi-scripts 同刷）
 - sysupgrade / caldata / envtools 等板级脚本
 
 **不包含**默认路径下的实验性 QSDK ECM/NSS 硬件加速。

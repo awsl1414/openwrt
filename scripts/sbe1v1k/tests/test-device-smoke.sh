@@ -125,10 +125,20 @@ else
 	bad "radio-mac.uc missing on device"
 fi
 
-if remote 'test -f /usr/share/hostap/phy-setup-lock.uc'; then
-	ok "phy-setup-lock.uc installed"
+if remote 'test -f /usr/share/hostap/phy-setup-queue.uc'; then
+	ok "phy-setup-queue.uc installed"
 else
-	bad "phy-setup-lock.uc missing on device"
+	bad "phy-setup-queue.uc missing on device"
+fi
+if remote 'grep -q phy_setup_run /usr/share/hostap/hostapd.uc'; then
+	ok "hostapd.uc has phy_setup_run"
+else
+	bad "hostapd.uc missing phy_setup_run"
+fi
+if remote 'test ! -f /usr/share/hostap/phy-setup-lock.uc'; then
+	ok "legacy phy-setup-lock.uc absent"
+else
+	bad "legacy phy-setup-lock.uc still on device"
 fi
 
 mac_map=$(remote '

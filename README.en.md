@@ -28,7 +28,7 @@ another verified recovery path.
 Extras beyond the upstream device PR (selected):
 
 - Hotplug `20-askey-sbe1v1k-wifi` when the ath12k phy appears late
-- Multi-radio identity via `hwmac` and serialized hostapd setup on one PHY
+- Multi-radio identity via `hwmac` and hostapd in-process phy setup queue (to AP steady state; flash hostapd/wpad together with wifi-scripts)
 - Board scripts for sysupgrade, caldata, and envtools
 
 The default image does **not** include experimental QSDK ECM/NSS acceleration.
