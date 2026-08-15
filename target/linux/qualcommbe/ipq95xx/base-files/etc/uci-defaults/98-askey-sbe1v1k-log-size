@@ -1,0 +1,30 @@
+#!/bin/sh
+# Raise logd ring buffer for askey,sbe1v1k bring-up (Wi-Fi / ath12k traces).
+# OpenWrt default is often 64–128 KiB and rotates away hours of hostapd history.
+# Only raise when unset or below the target so larger user values are kept.
+
+. /lib/functions.sh
+
+case "$(board_name)" in
+askey,sbe1v1k) ;;
+*) exit 0 ;;
+esac
+
+[ -f /etc/config/system ] || exit 0
+
+target=1024
+cur="$(uci -q get system.@system[0].log_size)"
+cur="${cur:-0}"
+
+case "$cur" in
+''|*[!0-9]*) cur=0 ;;
+esac
+
+[ "$cur" -ge "$target" ] && exit 0
+
+uci -q set system.@system[0].log_size="$target"
+uci commit system
+# logd reads -S at start; restart so the larger ring applies this boot.
+[ -x /etc/init.d/log ] && /etc/init.d/log restart
+
+exit 0

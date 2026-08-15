@@ -43,11 +43,21 @@ require_file "package/firmware/ipq-wifi/src/board-askey_sbe1v1k.qcn9274"
 require_file "target/linux/qualcommbe/ipq95xx/base-files/etc/hotplug.d/firmware/11-ath12k-caldata"
 require_file "target/linux/qualcommbe/ipq95xx/base-files/lib/upgrade/platform.sh"
 require_file "target/linux/qualcommbe/ipq95xx/base-files/etc/uci-defaults/99-askey-sbe1v1k-enable-2g-wifi"
+require_file "target/linux/qualcommbe/ipq95xx/base-files/etc/uci-defaults/98-askey-sbe1v1k-log-size"
 require_file "target/linux/qualcommbe/ipq95xx/base-files/usr/bin/sbe1v1k-diag"
 require_file "scripts/sbe1v1k/daily.config"
 require_file "scripts/sbe1v1k/minimal.config"
 require_file "scripts/sbe1v1k/build-arch.sh"
 require_file "target/linux/qualcommbe/ipq95xx/base-files/etc/uci-defaults/zz-askey-sbe1v1k-luci-zh"
+require_grep "target/linux/qualcommbe/ipq95xx/base-files/etc/uci-defaults/98-askey-sbe1v1k-log-size" \
+	'log_size' \
+	"uci-defaults raises system log_size for sbe1v1k"
+require_grep "target/linux/qualcommbe/ipq95xx/base-files/etc/uci-defaults/98-askey-sbe1v1k-log-size" \
+	'target=1024' \
+	"uci-defaults targets 1024 KiB log ring"
+require_grep "target/linux/qualcommbe/ipq95xx/base-files/etc/uci-defaults/98-askey-sbe1v1k-log-size" \
+	'/etc/init.d/log restart' \
+	"uci-defaults restarts logd after raising log_size"
 require_file "package/kernel/mac80211/patches/ath12k/400-wifi-ath12k-set-per-radio-MAC-address-from-DT.patch"
 require_file "package/network/config/wifi-scripts/files/usr/share/hostap/radio-mac.uc"
 require_file "package/network/config/wifi-scripts/files/usr/share/hostap/phy-setup-lock.uc"
